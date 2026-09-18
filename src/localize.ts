@@ -1,0 +1,162 @@
+import type { HomeAssistant } from "./types";
+
+const norwegian = (value: string) => /^(nb|nn|no)(-|$)/.test(value);
+const normalize = (value?: string) =>
+  (value ?? "").replace(/_/g, "-").toLowerCase();
+
+/** Dictionary: Bokmål for nb, no and nn (no Nynorsk dictionary), else English. */
+export function dictionary(hass?: Pick<HomeAssistant, "language" | "locale">) {
+  return norwegian(normalize(hass?.language || hass?.locale?.language))
+    ? "nb"
+    : "en";
+}
+
+/** Formatting locale, separate from the dictionary: en-GB keeps its 24-hour clock. */
+export function formatLocale(
+  hass?: Pick<HomeAssistant, "language" | "locale">,
+): string {
+  const value = normalize(hass?.locale?.language || hass?.language || "en");
+  if (norwegian(value)) return "nb-NO";
+  try {
+    return Intl.getCanonicalLocales(value)[0] ?? "en";
+  } catch {
+    return "en";
+  }
+}
+
+const en = {
+  title: "Doors and gates",
+  doors: "Doors",
+  gates: "Gates",
+  allLocked: "All locked",
+  unlockedCount: "{n} unlocked",
+  unlockedOne: "1 unlocked",
+  openCount: "{n} open",
+  openOne: "1 open",
+  problemCount: "{n} need attention",
+  problemOne: "1 needs attention",
+  unknownCount: "{n} not responding",
+  unknownOne: "1 not responding",
+  nothing: "Add doors and gates in the card editor.",
+  locked: "Locked",
+  unlocked: "Unlocked",
+  locking: "Locking…",
+  unlocking: "Unlocking…",
+  jammed: "Jammed",
+  lockOpen: "Open",
+  lockOpening: "Opening…",
+  gateOpen: "Open",
+  gateClosed: "Closed",
+  gateOpening: "Opening…",
+  gateClosing: "Closing…",
+  unavailable: "Not responding",
+  doorOpen: "door open",
+  doorClosed: "door closed",
+  lock: "Lock",
+  unlock: "Unlock",
+  open: "Open",
+  close: "Close",
+  stop: "Stop",
+  withCode: "Enter code",
+  lockAll: "Lock all",
+  confirmUnlock: "Unlock {name}?",
+  confirmUnlockBody: "Anyone at the door can come in until it is locked again.",
+  confirmOpen: "Open {name}?",
+  confirmOpenBody: "The gate stays open until it is closed.",
+  cancel: "Cancel",
+  sending: "Sending…",
+  failed: "{name}: could not {action}",
+  lastEvent: "Last at the panel",
+  ev_unlock: "{who} unlocked",
+  ev_lock: "{who} locked",
+  ev_open: "{who} opened the gate",
+  ev_close: "{who} closed the gate",
+  someone: "Someone",
+  level_guest: "guest",
+  level_resident: "resident",
+  level_admin: "admin",
+  // Editor
+  cardTitle: "Title",
+  appearance: "Appearance",
+  default: "Default",
+  bubble: "Bubble",
+  doorsLabel: "Door locks",
+  gatesLabel: "Gates",
+  accessEvent: "Access event (panel)",
+  confirmUnlockLabel: "Confirm before unlocking",
+  confirmGateLabel: "Confirm before opening a gate",
+};
+
+const nb: typeof en = {
+  title: "Dører og porter",
+  doors: "Dører",
+  gates: "Porter",
+  allLocked: "Alt er låst",
+  unlockedCount: "{n} ulåst",
+  unlockedOne: "1 ulåst",
+  openCount: "{n} åpne",
+  openOne: "1 åpen",
+  problemCount: "{n} trenger tilsyn",
+  problemOne: "1 trenger tilsyn",
+  unknownCount: "{n} svarer ikke",
+  unknownOne: "1 svarer ikke",
+  nothing: "Legg til dører og porter i kortredigeringen.",
+  locked: "Låst",
+  unlocked: "Ulåst",
+  locking: "Låser …",
+  unlocking: "Låser opp …",
+  jammed: "Fastlåst",
+  lockOpen: "Åpen",
+  lockOpening: "Åpner …",
+  gateOpen: "Åpen",
+  gateClosed: "Lukket",
+  gateOpening: "Åpner …",
+  gateClosing: "Lukker …",
+  unavailable: "Svarer ikke",
+  doorOpen: "døra står åpen",
+  doorClosed: "døra er lukket",
+  lock: "Lås",
+  unlock: "Lås opp",
+  open: "Åpne",
+  close: "Lukk",
+  stop: "Stopp",
+  withCode: "Skriv kode",
+  lockAll: "Lås alle",
+  confirmUnlock: "Låse opp {name}?",
+  confirmUnlockBody: "Alle ved døra kan gå inn til den er låst igjen.",
+  confirmOpen: "Åpne {name}?",
+  confirmOpenBody: "Porten står åpen til den lukkes.",
+  cancel: "Avbryt",
+  sending: "Sender …",
+  failed: "{name}: kunne ikke {action}",
+  lastEvent: "Sist ved panelet",
+  ev_unlock: "{who} låste opp",
+  ev_lock: "{who} låste",
+  ev_open: "{who} åpnet porten",
+  ev_close: "{who} lukket porten",
+  someone: "Noen",
+  level_guest: "gjest",
+  level_resident: "beboer",
+  level_admin: "admin",
+  cardTitle: "Tittel",
+  appearance: "Utseende",
+  default: "Standard",
+  bubble: "Bubble",
+  doorsLabel: "Dørlåser",
+  gatesLabel: "Porter",
+  accessEvent: "Tilgangshendelse (panel)",
+  confirmUnlockLabel: "Bekreft før opplåsing",
+  confirmGateLabel: "Bekreft før en port åpnes",
+};
+
+export type MessageKey = keyof typeof en;
+
+export function localize(
+  hass: Pick<HomeAssistant, "language" | "locale"> | undefined,
+  key: MessageKey,
+  values: Record<string, string | number> = {},
+): string {
+  return { en, nb }[dictionary(hass)][key].replace(/\{(\w+)\}/g, (_, name) =>
+    String(values[name] ?? ""),
+  );
+}
