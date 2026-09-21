@@ -9,8 +9,11 @@ export interface Lane {
   entityId: string;
   marks: Mark[];
 }
-/** A band's color: a severity tone, or a gap while the entity was silent. */
-export type Band = Tone | "gap";
+/**
+ * A band's color: a severity tone, a gate in motion (opening, closing), or a
+ * gap while the entity was silent.
+ */
+export type Band = Tone | "opening" | "closing" | "gap";
 
 export const RANGES = [6, 24, 168] as const;
 export type Range = (typeof RANGES)[number];
@@ -85,9 +88,11 @@ export function band(kind: LaneKind, state: string): Band {
   if (kind === "gate")
     return state === "closed"
       ? "ok"
-      : ["open", "opening", "closing"].includes(state)
+      : state === "open"
         ? "open"
-        : "unknown";
+        : state === "opening" || state === "closing"
+          ? state
+          : "unknown";
   if (state === "locked") return "ok";
   if (state === "jammed") return "problem";
   if (state === "open" || state === "opening") return "open";

@@ -46,6 +46,8 @@ const KEY: Record<Band, MessageKey> = {
   ok: "keyOk",
   attention: "keyAttention",
   open: "keyOpen",
+  opening: "keyOpening",
+  closing: "keyClosing",
   problem: "keyProblem",
   unknown: "keyGap",
   gap: "keyGap",
@@ -472,7 +474,7 @@ export class AccessControlCard extends LitElement {
     const title = item ? this.t("historyTitle", { name: item.name }) : "";
     const keys: Band[] =
       item?.kind === "gate"
-        ? ["ok", "open", "gap"]
+        ? ["ok", "opening", "open", "closing", "gap"]
         : ["ok", "attention", "open", "problem", "gap"];
     return html`<dialog
       id="history"
@@ -572,7 +574,9 @@ export class AccessControlCard extends LitElement {
         ${keys.map(
           (key) =>
             html`<li>
-              <span class=${`swatch b-${key}`}></span>${this.t(KEY[key])}
+              <span class=${`swatch b-${key}`}></span>${this.t(
+                key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key],
+              )}
             </li>`,
         )}
       </ul>

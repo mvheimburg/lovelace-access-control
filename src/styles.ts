@@ -327,6 +327,13 @@ export const styles = css`
   .b-open {
     --band: var(--ac-open);
   }
+  /* A gate in motion: amber while opening, blue while closing. */
+  .b-opening {
+    --band: var(--ac-attention);
+  }
+  .b-closing {
+    --band: var(--info-color, #0288d1);
+  }
   .b-problem {
     --band: var(--ac-problem);
   }

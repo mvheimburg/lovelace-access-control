@@ -299,9 +299,11 @@ function band(kind, state) {
     if (kind === "gate")
         return state === "closed"
             ? "ok"
-            : ["open", "opening", "closing"].includes(state)
+            : state === "open"
                 ? "open"
-                : "unknown";
+                : state === "opening" || state === "closing"
+                    ? state
+                    : "unknown";
     if (state === "locked")
         return "ok";
     if (state === "jammed")
@@ -404,6 +406,9 @@ const en = {
     keyOk: "Locked or closed",
     keyAttention: "Unlocked",
     keyOpen: "Open",
+    keyOpening: "Opening",
+    keyClosing: "Closing",
+    keyClosed: "Closed",
     keyProblem: "Jammed",
     keyGap: "Not responding",
     // Editor
@@ -487,6 +492,9 @@ const nb = {
     keyOk: "Låst eller lukket",
     keyAttention: "Ulåst",
     keyOpen: "Åpen",
+    keyOpening: "Åpner",
+    keyClosing: "Lukker",
+    keyClosed: "Lukket",
     keyProblem: "Fastlåst",
     keyGap: "Svarer ikke",
     cardTitle: "Tittel",
@@ -915,6 +923,13 @@ const styles = i$4 `
   }
   .b-open {
     --band: var(--ac-open);
+  }
+  /* A gate in motion: amber while opening, blue while closing. */
+  .b-opening {
+    --band: var(--ac-attention);
+  }
+  .b-closing {
+    --band: var(--info-color, #0288d1);
   }
   .b-problem {
     --band: var(--ac-problem);
@@ -1392,6 +1407,8 @@ const KEY = {
     ok: "keyOk",
     attention: "keyAttention",
     open: "keyOpen",
+    opening: "keyOpening",
+    closing: "keyClosing",
     problem: "keyProblem",
     unknown: "keyGap",
     gap: "keyGap",
@@ -1770,7 +1787,7 @@ class AccessControlCard extends i$1 {
         const at = this.hover;
         const title = item ? this.t("historyTitle", { name: item.name }) : "";
         const keys = item?.kind === "gate"
-            ? ["ok", "open", "gap"]
+            ? ["ok", "opening", "open", "closing", "gap"]
             : ["ok", "attention", "open", "problem", "gap"];
         return b `<dialog
       id="history"
@@ -1856,7 +1873,7 @@ class AccessControlCard extends i$1 {
       </div>
       <ul class="key">
         ${keys.map((key) => b `<li>
-              <span class=${`swatch b-${key}`}></span>${this.t(KEY[key])}
+              <span class=${`swatch b-${key}`}></span>${this.t(key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key])}
             </li>`)}
       </ul>
     </dialog>`;

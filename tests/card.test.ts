@@ -515,6 +515,41 @@ describe("history", () => {
     ).toEqual(["band b-open"]);
   });
 
+  it("draws a gate opening and closing as their own states, with a gate key", async () => {
+    const now = Date.now();
+    const { hass, history } = withHistory(now);
+    const s = (ms: number) => ms / 1000;
+    history.mockImplementation(async () => ({
+      "cover.gate": [
+        { s: "closed", lu: s(now - 5 * HOUR) },
+        { s: "opening", lu: s(now - 4 * HOUR) },
+        { s: "open", lu: s(now - 3.9 * HOUR) },
+        { s: "closing", lu: s(now - 2 * HOUR) },
+        { s: "closed", lu: s(now - 1.9 * HOUR) },
+      ],
+    }));
+    const { root } = await mount(hass);
+    await open(root, "cover.gate");
+    expect(
+      [...root.querySelectorAll(".timeline .band")].map((b) =>
+        b.getAttribute("class"),
+      ),
+    ).toEqual([
+      "band b-ok",
+      "band b-opening",
+      "band b-open",
+      "band b-closing",
+      "band b-ok",
+    ]);
+    point(root, 2);
+    await vi.waitFor(() => expect(lanes(root)).toEqual(["Gate Closing…"]));
+    expect(
+      [...root.querySelectorAll("#history .key li")].map((li) =>
+        li.textContent!.trim(),
+      ),
+    ).toEqual(["Closed", "Opening", "Open", "Closing", "Not responding"]);
+  });
+
   it("explains a failed history request in Bokmål", async () => {
     const { hass } = withHistory(Date.now(), new Error("Recorder is off"));
     hass.language = "nb";
