@@ -206,6 +206,12 @@ export const styles = css`
     background: color-mix(in srgb, var(--ac-text) 8%, transparent);
     cursor: pointer;
   }
+  button.act.arrow {
+    width: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
   button.act.primary {
     color: #fff;
     background: color-mix(in srgb, var(--ac-ok) 62%, #000);

@@ -205,6 +205,23 @@ export class AccessControlCard extends LitElement {
       >
     </div>`;
   }
+  /** Up, stop, down like Home Assistant's cover controls; a direction already reached is disabled. */
+  private gateArrows(item: Resolved, disabled: boolean) {
+    const arrow = (action: Action, name: string, off: boolean) =>
+      html`<button
+        class="act arrow"
+        data-action=${action}
+        aria-label="${this.t(action)}: ${item.name}"
+        title=${this.t(action)}
+        ?disabled=${disabled || off}
+        @click=${() => this.ask(item, action)}
+      >
+        ${icon(name)}
+      </button>`;
+    return html`${arrow("open", "up", ["open", "opening"].includes(item.state))}
+    ${item.canStop ? arrow("stop", "stop", false) : nothing}
+    ${arrow("close", "down", ["closed", "closing"].includes(item.state))}`;
+  }
   private renderRow(item: Resolved) {
     const busy = this.pending.has(item.entity) || this.pending.has("*");
     const disabled = busy || !item.available;
@@ -235,15 +252,7 @@ export class AccessControlCard extends LitElement {
           : ["locked", "locking"].includes(item.state)
             ? button("unlock")
             : button("lock", "primary")
-        : html`${
-            item.state === "opening" || item.state === "closing"
-              ? item.canStop
-                ? button("stop")
-                : nothing
-              : item.state === "closed"
-                ? button("open")
-                : button("close", "primary")
-          }`;
+        : this.gateArrows(item, disabled);
     const failure = this.failures.get(item.entity);
     return html`<div class="row sev-${item.tone}" data-entity=${item.entity}>
         <button class="who" @click=${() => this.moreInfo(item.entity)}>

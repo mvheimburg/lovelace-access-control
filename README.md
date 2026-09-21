@@ -69,8 +69,8 @@ Entries written as objects in YAML are kept when you tick or untick others.
   the lock's device has exactly one door/opening sensor; set `contact` to choose
   one yourself. Tap a name for Home Assistant's own dialog.
 - **Actions.** A locked door offers **Unlock**, an unlocked one **Lock**; a gate
-  offers **Open**, **Close**, or **Stop** while it moves (when the gate supports
-  it). Unlocking and opening a gate are confirmed inside the card unless turned
+  has arrow buttons — up to open, stop (when the gate supports it) and down to
+  close — with the direction it is already at disabled (0.2.0). Unlocking and opening a gate are confirmed inside the card unless turned
   off. A lock that needs a code offers **Enter code**, which opens Home
   Assistant's dialog so the code is entered there. With two or more unlocked
   doors, **Lock all** locks them in one call.

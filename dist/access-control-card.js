@@ -79,6 +79,9 @@ const paths = {
     warning: w `<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path>`,
     unknown: w `<circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.2M12 17h.01"></path>`,
     person: w `<circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path>`,
+    up: w `<path d="m6 15 6-6 6 6"></path>`,
+    down: w `<path d="m6 9 6 6 6-6"></path>`,
+    stop: w `<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>`,
     spinner: w `<path d="M21 12a9 9 0 1 1-6.2-8.56"></path>`,
 };
 // No whitespace inside <svg>: it would leak into a button's textContent.
@@ -525,6 +528,12 @@ const styles = i$3 `
     background: color-mix(in srgb, var(--ac-text) 8%, transparent);
     cursor: pointer;
   }
+  button.act.arrow {
+    width: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+  }
   button.act.primary {
     color: #fff;
     background: color-mix(in srgb, var(--ac-ok) 62%, #000);
@@ -946,6 +955,22 @@ class AccessControlCard extends i {
       >
     </div>`;
     }
+    /** Up, stop, down like Home Assistant's cover controls; a direction already reached is disabled. */
+    gateArrows(item, disabled) {
+        const arrow = (action, name, off) => b `<button
+        class="act arrow"
+        data-action=${action}
+        aria-label="${this.t(action)}: ${item.name}"
+        title=${this.t(action)}
+        ?disabled=${disabled || off}
+        @click=${() => this.ask(item, action)}
+      >
+        ${icon(name)}
+      </button>`;
+        return b `${arrow("open", "up", ["open", "opening"].includes(item.state))}
+    ${item.canStop ? arrow("stop", "stop", false) : A}
+    ${arrow("close", "down", ["closed", "closing"].includes(item.state))}`;
+    }
     renderRow(item) {
         const busy = this.pending.has(item.entity) || this.pending.has("*");
         const disabled = busy || !item.available;
@@ -973,13 +998,7 @@ class AccessControlCard extends i {
                 : ["locked", "locking"].includes(item.state)
                     ? button("unlock")
                     : button("lock", "primary")
-            : b `${item.state === "opening" || item.state === "closing"
-                ? item.canStop
-                    ? button("stop")
-                    : A
-                : item.state === "closed"
-                    ? button("open")
-                    : button("close", "primary")}`;
+            : this.gateArrows(item, disabled);
         const failure = this.failures.get(item.entity);
         return b `<div class="row sev-${item.tone}" data-entity=${item.entity}>
         <button class="who" @click=${() => this.moreInfo(item.entity)}>

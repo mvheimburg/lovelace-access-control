@@ -266,3 +266,26 @@ describe("configuration and locale", () => {
     );
   });
 });
+
+it("controls a gate with up, stop and down, disabling the direction it is already at", async () => {
+  const hass = fixture();
+  const { card, root } = await mount(hass);
+  const arrows = () =>
+    [
+      ...row(root, "cover.gate").querySelectorAll<HTMLButtonElement>(".arrow"),
+    ].map((b) => `${b.dataset.action}:${b.disabled ? "off" : "on"}`);
+  expect(arrows()).toEqual(["open:on", "stop:on", "close:off"]);
+  expect(
+    row(root, "cover.gate")
+      .querySelector('[data-action="open"]')
+      ?.getAttribute("aria-label"),
+  ).toBe("Open: Gate");
+  hass.states["cover.gate"].state = "open";
+  card.hass = { ...hass };
+  await settle();
+  expect(arrows()).toEqual(["open:off", "stop:on", "close:on"]);
+  hass.states["cover.gate"].attributes.supported_features = 3;
+  card.hass = { ...hass };
+  await settle();
+  expect(arrows()).toEqual(["open:off", "close:on"]);
+});

@@ -9,6 +9,9 @@ const paths: Record<string, SVGTemplateResult> = {
   warning: svg`<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4M12 17h.01"></path>`,
   unknown: svg`<circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.2M12 17h.01"></path>`,
   person: svg`<circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path>`,
+  up: svg`<path d="m6 15 6-6 6 6"></path>`,
+  down: svg`<path d="m6 9 6 6 6-6"></path>`,
+  stop: svg`<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>`,
   spinner: svg`<path d="M21 12a9 9 0 1 1-6.2-8.56"></path>`,
 };
 
