@@ -92,42 +92,58 @@ export class AccessControlCard extends LitElement {
       this.requestUpdate();
       return;
     }
-    void this.call([item.entity], action, item.name);
+    void this.call(item.entity, action, item.name);
   }
-  private async call(entities: string[], action: Action, name: string) {
-    const key = entities.length > 1 ? "*" : entities[0];
+  private call(entity: string, action: Action, name: string) {
+    return this.run(entity, name, [[action, [entity]]]);
+  }
+  /** Sends each step's service call; `key` marks what is pending ("*" for Lock all). */
+  private async run(
+    key: string,
+    name: string,
+    steps: Array<[Action, string[]]>,
+  ) {
     if (this.pending.has(key)) return;
     this.confirming = undefined;
     this.pending.add(key);
-    for (const entity of entities) this.failures.delete(entity);
+    this.failures.delete(key);
+    for (const [, entities] of steps)
+      for (const entity of entities) this.failures.delete(entity);
     this.requestUpdate();
-    const [domain, service] = SERVICE[action];
-    try {
-      if (!this.ha?.callService)
-        throw new Error("Home Assistant service API unavailable");
-      // Home Assistant reports the outcome in the entity's state.
-      await this.ha.callService(
-        domain,
-        service,
-        {},
-        { entity_id: entities.length === 1 ? entities[0] : entities },
-        false,
-      );
-    } catch (error) {
+    // Home Assistant reports the outcome in the entities' states.
+    const results = await Promise.allSettled(
+      steps.map(async ([action, entities]) => {
+        if (!this.ha?.callService)
+          throw new Error("Home Assistant service API unavailable");
+        const [domain, service] = SERVICE[action];
+        return this.ha.callService(
+          domain,
+          service,
+          {},
+          { entity_id: entities.length === 1 ? entities[0] : entities },
+          false,
+        );
+      }),
+    );
+    const index = results.findIndex((r) => r.status === "rejected");
+    if (index >= 0) {
+      const error = (results[index] as PromiseRejectedResult).reason;
       const reason =
         error instanceof Error
           ? error.message
           : typeof error === "object" && error && "message" in error
             ? String(error.message)
             : String(error);
+      const action = this.t(steps[index][0]).toLocaleLowerCase(
+        formatLocale(this.ha),
+      );
       this.failures.set(
         key,
-        `${this.t("failed", { name, action: this.t(action).toLocaleLowerCase(formatLocale(this.ha)) })}: ${reason}`,
+        `${this.t("failed", { name, action })}: ${reason}`,
       );
-    } finally {
-      this.pending.delete(key);
-      this.requestUpdate();
     }
+    this.pending.delete(key);
+    this.requestUpdate();
   }
 
   private stateLabel(item: Resolved): string {
@@ -320,7 +336,7 @@ export class AccessControlCard extends LitElement {
         <button
           class="act risky"
           data-confirm-action
-          @click=${() => void this.call([item.entity], this.confirming!.action, item.name)}
+          @click=${() => void this.call(item.entity, this.confirming!.action, item.name)}
         >
           ${this.t(unlock ? "unlock" : "open")}
         </button>
@@ -336,6 +352,17 @@ export class AccessControlCard extends LitElement {
     const tone = all.length ? overall(all) : "unknown";
     const lockable = doors.filter(
       (d) => d.available && !d.needsCode && d.state === "unlocked",
+    );
+    const closable = gates.filter(
+      (g) => g.available && !["closed", "closing"].includes(g.state),
+    );
+    const secureCount = lockable.length + closable.length;
+    const secureLabel = this.t(
+      !closable.length
+        ? "lockAll"
+        : !lockable.length
+          ? "closeAll"
+          : "secureAll",
     );
     const lockAllFailure = this.failures.get("*");
     return html`<ha-card class=${this.config.appearance}>
@@ -366,20 +393,29 @@ export class AccessControlCard extends LitElement {
           : nothing
       }
       ${
-        lockable.length > 1
+        secureCount > 1
           ? html`<button
               class="lock-all"
               data-lock-all
               ?disabled=${this.pending.size > 0}
               @click=${() =>
-                this.call(
-                  lockable.map((d) => d.entity),
-                  "lock",
-                  this.t("lockAll"),
+                this.run(
+                  "*",
+                  secureLabel,
+                  [
+                    ["lock", lockable.map((d) => d.entity)] as [
+                      Action,
+                      string[],
+                    ],
+                    ["close", closable.map((g) => g.entity)] as [
+                      Action,
+                      string[],
+                    ],
+                  ].filter(([, entities]) => entities.length),
                 )}
             >
               ${icon(this.pending.has("*") ? "spinner" : "locked", this.pending.has("*") ? "spin" : "")}
-              ${this.t("lockAll")} (${lockable.length})
+              ${secureLabel} (${secureCount})
             </button>`
           : nothing
       }

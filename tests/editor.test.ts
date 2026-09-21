@@ -59,8 +59,8 @@ it("sets the access event, confirmations and appearance, in Bokmål", async () =
   const unlock = root.querySelector<HTMLInputElement>(
     '[data-field="confirm_unlock"]',
   )!;
-  expect(unlock.checked).toBe(true);
-  unlock.checked = false;
+  expect(unlock.checked).toBe(false);
+  unlock.checked = true;
   unlock.dispatchEvent(new Event("change"));
   const look = root.querySelector<HTMLSelectElement>(
     '[data-field="appearance"]',
@@ -69,7 +69,7 @@ it("sets the access event, confirmations and appearance, in Bokmål", async () =
   look.dispatchEvent(new Event("change"));
   expect(configs.at(-1)).toEqual({
     access_event: "event.doorbell_door_access",
-    confirm_unlock: false,
+    confirm_unlock: true,
     appearance: "bubble",
   });
 });

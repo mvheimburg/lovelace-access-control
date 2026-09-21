@@ -202,8 +202,8 @@ function validateConfig(input) {
         throw new Error("Card configuration is required");
     const config = {
         appearance: "default",
-        confirm_unlock: true,
-        confirm_gate: true,
+        confirm_unlock: false,
+        confirm_gate: false,
         ...input,
     };
     if (!["default", "bubble"].includes(String(config.appearance)))
@@ -297,6 +297,8 @@ const en = {
     stop: "Stop",
     withCode: "Enter code",
     lockAll: "Lock all",
+    closeAll: "Close all",
+    secureAll: "Lock and close all",
     confirmUnlock: "Unlock {name}?",
     confirmUnlockBody: "Anyone at the door can come in until it is locked again.",
     confirmOpen: "Open {name}?",
@@ -359,6 +361,8 @@ const nb = {
     stop: "Stopp",
     withCode: "Skriv kode",
     lockAll: "Lås alle",
+    closeAll: "Lukk alle",
+    secureAll: "Lås og lukk alle",
     confirmUnlock: "Låse opp {name}?",
     confirmUnlockBody: "Alle ved døra kan gå inn til den er låst igjen.",
     confirmOpen: "Åpne {name}?",
@@ -836,7 +840,7 @@ class AccessControlCardEditor extends i$1 {
         <input
           type="checkbox"
           data-field=${key}
-          .checked=${this.config[key] !== false}
+          .checked=${this.config[key] === true}
           @change=${(e) => this.set(key, e.target.checked)}
         />
         ${this.t(label)}
@@ -1009,36 +1013,42 @@ class AccessControlCard extends i$1 {
             this.requestUpdate();
             return;
         }
-        void this.call([item.entity], action, item.name);
+        void this.call(item.entity, action, item.name);
     }
-    async call(entities, action, name) {
-        const key = entities.length > 1 ? "*" : entities[0];
+    call(entity, action, name) {
+        return this.run(entity, name, [[action, [entity]]]);
+    }
+    /** Sends each step's service call; `key` marks what is pending ("*" for Lock all). */
+    async run(key, name, steps) {
         if (this.pending.has(key))
             return;
         this.confirming = undefined;
         this.pending.add(key);
-        for (const entity of entities)
-            this.failures.delete(entity);
+        this.failures.delete(key);
+        for (const [, entities] of steps)
+            for (const entity of entities)
+                this.failures.delete(entity);
         this.requestUpdate();
-        const [domain, service] = SERVICE[action];
-        try {
+        // Home Assistant reports the outcome in the entities' states.
+        const results = await Promise.allSettled(steps.map(async ([action, entities]) => {
             if (!this.ha?.callService)
                 throw new Error("Home Assistant service API unavailable");
-            // Home Assistant reports the outcome in the entity's state.
-            await this.ha.callService(domain, service, {}, { entity_id: entities.length === 1 ? entities[0] : entities }, false);
-        }
-        catch (error) {
+            const [domain, service] = SERVICE[action];
+            return this.ha.callService(domain, service, {}, { entity_id: entities.length === 1 ? entities[0] : entities }, false);
+        }));
+        const index = results.findIndex((r) => r.status === "rejected");
+        if (index >= 0) {
+            const error = results[index].reason;
             const reason = error instanceof Error
                 ? error.message
                 : typeof error === "object" && error && "message" in error
                     ? String(error.message)
                     : String(error);
-            this.failures.set(key, `${this.t("failed", { name, action: this.t(action).toLocaleLowerCase(formatLocale(this.ha)) })}: ${reason}`);
+            const action = this.t(steps[index][0]).toLocaleLowerCase(formatLocale(this.ha));
+            this.failures.set(key, `${this.t("failed", { name, action })}: ${reason}`);
         }
-        finally {
-            this.pending.delete(key);
-            this.requestUpdate();
-        }
+        this.pending.delete(key);
+        this.requestUpdate();
     }
     stateLabel(item) {
         if (!item.available)
@@ -1215,7 +1225,7 @@ class AccessControlCard extends i$1 {
         <button
           class="act risky"
           data-confirm-action
-          @click=${() => void this.call([item.entity], this.confirming.action, item.name)}
+          @click=${() => void this.call(item.entity, this.confirming.action, item.name)}
         >
           ${this.t(unlock ? "unlock" : "open")}
         </button>
@@ -1230,6 +1240,13 @@ class AccessControlCard extends i$1 {
         const all = [...doors, ...gates];
         const tone = all.length ? overall(all) : "unknown";
         const lockable = doors.filter((d) => d.available && !d.needsCode && d.state === "unlocked");
+        const closable = gates.filter((g) => g.available && !["closed", "closing"].includes(g.state));
+        const secureCount = lockable.length + closable.length;
+        const secureLabel = this.t(!closable.length
+            ? "lockAll"
+            : !lockable.length
+                ? "closeAll"
+                : "secureAll");
         const lockAllFailure = this.failures.get("*");
         return b `<ha-card class=${this.config.appearance}>
       <div class="title">${this.config.title ?? this.t("title")}</div>
@@ -1254,15 +1271,18 @@ class AccessControlCard extends i$1 {
               ${gates.map((g) => this.renderRow(g))}
             </section>`
             : A}
-      ${lockable.length > 1
+      ${secureCount > 1
             ? b `<button
               class="lock-all"
               data-lock-all
               ?disabled=${this.pending.size > 0}
-              @click=${() => this.call(lockable.map((d) => d.entity), "lock", this.t("lockAll"))}
+              @click=${() => this.run("*", secureLabel, [
+                ["lock", lockable.map((d) => d.entity)],
+                ["close", closable.map((g) => g.entity)],
+            ].filter(([, entities]) => entities.length))}
             >
               ${icon(this.pending.has("*") ? "spinner" : "locked", this.pending.has("*") ? "spin" : "")}
-              ${this.t("lockAll")} (${lockable.length})
+              ${secureLabel} (${secureCount})
             </button>`
             : A}
       ${lockAllFailure

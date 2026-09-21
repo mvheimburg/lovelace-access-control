@@ -9,7 +9,7 @@ Bokmål (*Dører og porter*).
 
 ![Access Control card in Bubble appearance on a dark theme: everything locked, and an evening with the gate open and one door unlocked](docs/access-control-dark.png)
 
-![The same card on a light theme, and the confirmation before unlocking](docs/access-control-light.png)
+![The same card on a light theme, and the optional confirmation before unlocking](docs/access-control-light.png)
 
 The images use the production bundle with simulated Home Assistant states. No
 live Home Assistant instance was involved.
@@ -40,8 +40,8 @@ doors:
 gates:
   - cover.driveway_gate
 access_event: event.doorbell_door_access
-confirm_unlock: true
-confirm_gate: true
+confirm_unlock: false
+confirm_gate: false
 ```
 
 | Option | Default | Description |
@@ -49,8 +49,8 @@ confirm_gate: true
 | `doors` | all `lock` entities | Door locks. An entry is an entity ID, or an object with `entity` and optionally `name` and `contact`. |
 | `gates` | all gate/garage `cover` entities | Gates. Same form as `doors`. |
 | `access_event` | none | An `event` entity whose events carry `event_type` (`unlock`, `lock`, `open`, `close`), `user_name`, `access_level` and `door`, such as the door panel's `event.doorbell_door_access`. Shown as the last panel event. |
-| `confirm_unlock` | `true` | Ask in the card before unlocking a door. |
-| `confirm_gate` | `true` | Ask in the card before opening a gate. |
+| `confirm_unlock` | `false` | Ask in the card before unlocking a door (off by default since 0.4.0). |
+| `confirm_gate` | `false` | Ask in the card before opening a gate (off by default since 0.4.0). |
 | `title` | Doors and gates / Dører og porter | Heading. |
 | `appearance` | `default` | `default` or `bubble` (uses the dashboard's `--bubble-*` variables). |
 
@@ -70,10 +70,13 @@ Entries written as objects in YAML are kept when you tick or untick others.
   one yourself. Tap a name for Home Assistant's own dialog.
 - **Actions.** A locked door offers **Unlock**, an unlocked one **Lock**; a gate
   has arrow buttons — up to open, stop (when the gate supports it) and down to
-  close — with the direction it is already at disabled (0.2.0). Unlocking and opening a gate are confirmed inside the card unless turned
-  off. A lock that needs a code offers **Enter code**, which opens Home
-  Assistant's dialog so the code is entered there. With two or more unlocked
-  doors, **Lock all** locks them in one call.
+  close — with the direction it is already at disabled (0.2.0). Unlocking and
+  opening a gate happen at once; turn on `confirm_unlock` or `confirm_gate` to
+  be asked inside the card first. A lock that needs a code offers **Enter
+  code**, which opens Home Assistant's dialog so the code is entered there.
+  With two or more unlocked doors or open gates, one button locks every
+  unlocked door and closes every open gate — **Lock all**, **Close all** or
+  **Lock and close all**, depending on what is open (gates since 0.4.0).
 - **Feedback.** A request in flight shows *Sending…* and blocks a second press;
   a failure is shown by the door it concerns, and the row keeps showing Home
   Assistant's real state. A door or gate that is not responding has its actions

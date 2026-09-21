@@ -183,6 +183,7 @@ it.each(["bright", "warm", "mint", "sky", "lavender"])(
       doors: ["lock.front"],
       appearance: "bubble",
       color_scheme,
+      confirm_unlock: true,
     });
     document.body.append(card);
     await card.updateComplete;

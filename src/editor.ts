@@ -146,7 +146,7 @@ export class AccessControlCardEditor extends LitElement {
         <input
           type="checkbox"
           data-field=${key}
-          .checked=${this.config[key] !== false}
+          .checked=${this.config[key] === true}
           @change=${(e: Event) => this.set(key, (e.target as HTMLInputElement).checked)}
         />
         ${this.t(label)}

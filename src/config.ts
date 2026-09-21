@@ -24,8 +24,8 @@ export function validateConfig(input: Record<string, unknown>): CardConfig {
     throw new Error("Card configuration is required");
   const config = {
     appearance: "default",
-    confirm_unlock: true,
-    confirm_gate: true,
+    confirm_unlock: false,
+    confirm_gate: false,
     ...input,
   } as Record<string, unknown>;
   if (!["default", "bubble"].includes(String(config.appearance)))

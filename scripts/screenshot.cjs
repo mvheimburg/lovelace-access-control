@@ -90,6 +90,7 @@ async function shot(browser, errors, { file, theme, cards }) {
         doors: ["lock.front", "lock.terrace", "lock.garage"],
         gates: ["cover.gate"],
         access_event: "event.doorbell_door_access",
+        confirm_unlock: true,
       });
       card.hass = { ...hass, callService: () => new Promise(() => {}) };
       document.querySelector("main").append(card);

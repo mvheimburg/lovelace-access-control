@@ -115,9 +115,9 @@ describe("status", () => {
 });
 
 describe("actions", () => {
-  it("confirms an unlock in the card, then calls lock.unlock once", async () => {
+  it("confirms an unlock in the card when asked to, then calls lock.unlock once", async () => {
     const hass = fixture();
-    const { root } = await mount(hass);
+    const { root } = await mount(hass, { ...CONFIG, confirm_unlock: true });
     press(root, "lock.front", "unlock");
     await settle();
     expect(text(root, "[data-confirm]")).toContain("Unlock Front door?");
@@ -167,9 +167,9 @@ describe("actions", () => {
     );
     expect(text(root, '[data-entity="lock.back"]')).toContain("Unlocked");
   });
-  it("opens a gate after confirmation, closes and stops it without", async () => {
+  it("opens a gate after confirmation when asked to, closes and stops it without", async () => {
     const hass = fixture();
-    const { card, root } = await mount(hass);
+    const { card, root } = await mount(hass, { ...CONFIG, confirm_gate: true });
     press(root, "cover.gate", "open");
     await settle();
     expect(text(root, "[data-confirm]")).toContain("Open Gate?");
@@ -190,17 +190,17 @@ describe("actions", () => {
       ["cover", "close_cover"],
     ]);
   });
-  it("skips confirmation when the card is told to", async () => {
+  it("unlocks and opens at once by default", async () => {
     const hass = fixture();
-    const { root } = await mount(hass, {
-      ...CONFIG,
-      confirm_unlock: false,
-      confirm_gate: false,
-    });
+    const { root } = await mount(hass);
     press(root, "lock.front", "unlock");
     press(root, "cover.gate", "open");
     await settle();
-    expect(hass.calls.length).toBe(2);
+    expect(root.querySelector("[data-confirm]")).toBeNull();
+    expect(hass.calls).toEqual([
+      ["lock", "unlock", {}, { entity_id: "lock.front" }, false],
+      ["cover", "open_cover", {}, { entity_id: "cover.gate" }, false],
+    ]);
   });
   it("sends a lock with a code to Home Assistant's own dialog", async () => {
     const hass = fixture();
@@ -227,6 +227,61 @@ describe("actions", () => {
     expect(hass.calls).toEqual([
       ["lock", "lock", {}, { entity_id: ["lock.front", "lock.back"] }, false],
     ]);
+  });
+  it("locks the doors and closes the gates together, in Bokmål", async () => {
+    const hass = fixture();
+    hass.language = "nb";
+    hass.states["lock.back"].state = "unlocked";
+    hass.states["cover.gate"].state = "open";
+    hass.states["cover.carport"] = {
+      entity_id: "cover.carport",
+      state: "closed",
+      attributes: { device_class: "gate" },
+    };
+    const { root } = await mount(hass, {
+      ...CONFIG,
+      gates: ["cover.gate", "cover.carport"],
+    });
+    const all = root.querySelector<HTMLButtonElement>("[data-lock-all]")!;
+    expect(all.textContent).toContain("Lås og lukk alle (2)");
+    all.click();
+    await settle();
+    expect(hass.calls).toEqual([
+      ["lock", "lock", {}, { entity_id: "lock.back" }, false],
+      ["cover", "close_cover", {}, { entity_id: "cover.gate" }, false],
+    ]);
+  });
+  it("closes all open gates when every door is locked, and reports a failure", async () => {
+    const hass = fixture(async (domain) => {
+      if (domain === "cover") throw new Error("Gate motor fault");
+    });
+    hass.states["cover.gate"].state = "open";
+    hass.states["cover.side"] = {
+      entity_id: "cover.side",
+      state: "opening",
+      attributes: { friendly_name: "Side gate", device_class: "gate" },
+    };
+    const { root } = await mount(hass, {
+      ...CONFIG,
+      gates: ["cover.gate", "cover.side"],
+    });
+    const all = root.querySelector<HTMLButtonElement>("[data-lock-all]")!;
+    expect(all.textContent).toContain("Close all (2)");
+    all.click();
+    await settle();
+    expect(hass.calls).toEqual([
+      [
+        "cover",
+        "close_cover",
+        {},
+        { entity_id: ["cover.gate", "cover.side"] },
+        false,
+      ],
+    ]);
+    expect(text(root, '[role="alert"]')).toBe(
+      "Close all: could not close: Gate motor fault",
+    );
+    expect(all.disabled).toBe(false);
   });
   it("disables actions on a door that is not responding", async () => {
     const hass = fixture();
