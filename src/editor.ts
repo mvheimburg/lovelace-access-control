@@ -1,3 +1,4 @@
+import { colorSchemeSelector } from "./color-schemes";
 import { LitElement, css, html, nothing } from "lit";
 import { localize, type MessageKey } from "./localize";
 import { candidates, itemEntity } from "./model";
@@ -151,6 +152,7 @@ export class AccessControlCardEditor extends LitElement {
         ${this.t(label)}
       </label>`;
     return html`
+      ${colorSchemeSelector(this.ha, this.config.color_scheme, (scheme) => this.set("color_scheme", scheme))}
       <label class="field">
         ${this.t("cardTitle")}
         <input

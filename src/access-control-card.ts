@@ -1,3 +1,4 @@
+import { applyColorScheme } from "./color-schemes";
 import { LitElement, html, nothing } from "lit";
 import { validateConfig } from "./config";
 import { icon } from "./icons";
@@ -46,7 +47,9 @@ export class AccessControlCard extends LitElement {
     };
   }
   setConfig(config: Record<string, unknown>) {
-    this.config = validateConfig(config);
+    const next = validateConfig(config);
+    applyColorScheme(this, config.color_scheme, this.ha);
+    this.config = next;
     this.confirming = undefined;
     this.failures.clear();
     this.requestUpdate();

@@ -1,3 +1,4 @@
+import type { ColorScheme } from "./color-schemes";
 export interface HassEntity {
   entity_id: string;
   state: string;
@@ -45,6 +46,7 @@ export interface CardConfig {
   type?: string;
   title?: string;
   appearance: "default" | "bubble";
+  color_scheme?: ColorScheme;
   doors: Item[];
   gates: Item[];
   access_event?: string;
