@@ -11,6 +11,8 @@ Bokmål (*Dører og porter*).
 
 ![The same card on a light theme, and the optional confirmation before unlocking](docs/access-control-light.png)
 
+![The history of the front door: a timeline of the lock and the door contact over 24 hours, with the states under the pointer](docs/access-control-history.png)
+
 The images use the production bundle with simulated Home Assistant states. No
 live Home Assistant instance was involved.
 
@@ -67,7 +69,8 @@ Entries written as objects in YAML are kept when you tick or untick others.
 - **Doors and gates as two groups.** Each row shows the state, whether the door
   itself stands open, and the area. A door contact is found automatically when
   the lock's device has exactly one door/opening sensor; set `contact` to choose
-  one yourself. Tap a name for Home Assistant's own dialog.
+  one yourself. Tap the icon or name for Home Assistant's own dialog; tap the
+  state line for the history (below).
 - **Actions.** A locked door offers **Unlock**, an unlocked one **Lock**; a gate
   has arrow buttons — up to open, stop (when the gate supports it) and down to
   close — with the direction it is already at disabled (0.2.0). Unlocking and
@@ -82,13 +85,42 @@ Entries written as objects in YAML are kept when you tick or untick others.
   Assistant's real state. A door or gate that is not responding has its actions
   disabled.
 
+## History
+
+Tap a row's state line (*Locked · door closed · Hall*, marked with a small
+pulse icon) to see that door's or gate's history from Home Assistant's
+recorder (0.5.0). The icon and name keep opening Home Assistant's own dialog;
+the state line has its own 44 px touch target without changing the row's look.
+
+- **A timeline, one lane per entity.** A door shows its lock (*Locked*,
+  *Unlocked*, *Locking…*, *Jammed* …) and, when it has one, its door contact
+  (*Open*, *Closed*). A gate shows its cover (*Open*, *Closed*, *Opening…*,
+  *Closing…*) and its contact, if one is set.
+- **Colored bands in the card's tones.** Green for locked or closed, amber for
+  unlocked (and locking/unlocking), orange for open, red for jammed. A spell
+  when the entity was unavailable or unknown is hatched grey — a gap, not a
+  state. Time before the recorder has anything is left empty.
+- **6 h, 24 h and 7 d.** The chart fits the dialog's width, also on a phone.
+- **Read it with the pointer.** Moving over the timeline shows the time and
+  each lane's state at that moment; without a pointer the lanes show the
+  current state. Tap a lane below the chart to close the history and open that
+  entity's Home Assistant dialog.
+- **Failures are explained** in the dialog (for example when the recorder is
+  off), and a slow reply from an earlier range never replaces a newer one.
+
+The card asks Home Assistant for `history/history_during_period` with minimal,
+attribute-free rows, using the frontend's websocket connection; no extra setup
+is needed beyond the recorder, which Home Assistant runs by default.
+
 ## Language and formatting
 
 The card follows Home Assistant's language (`nb`, `nb-NO` and `no` give Bokmål;
 `nn` uses Bokmål too; anything else English) and updates when it changes. Times
 use Home Assistant's formatting locale and 12/24-hour preference separately.
 Entity and user names are shown as Home Assistant and the panel name them. The
-card-picker entry is English because it has no Home Assistant context.
+card-picker entry is English because it has no Home Assistant context. The
+history's range labels (*6 t / 24 t / 7 d* in Bokmål) and times follow the
+formatting locale too.
 
 ## Development
 

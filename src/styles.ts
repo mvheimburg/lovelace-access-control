@@ -157,30 +157,65 @@ export const styles = css`
   .row.sev-problem {
     background: color-mix(in srgb, var(--sev) 14%, var(--ac-pill));
   }
+  /*
+   * The icon and name open Home Assistant's dialog; the state line on top of
+   * them opens the history. Both share one grid, so the row looks as before.
+   */
   .who {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    column-gap: 12px;
     flex: 1 1 180px;
     min-width: 0;
-    min-height: 48px;
-    padding: 0 6px 0 0;
+    min-height: 56px;
+  }
+  .who > button {
     border: 0;
-    border-radius: calc(var(--ac-radius) - 4px);
     background: none;
     color: inherit;
     font: inherit;
     text-align: left;
     cursor: pointer;
+    padding: 0;
   }
-  .who-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
+  .info {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: subgrid;
+    grid-template-rows: subgrid;
+    align-items: end;
+    border-radius: calc(var(--ac-radius) - 4px);
+  }
+  .info .circ {
+    grid-row: 1 / -1;
+    align-self: center;
   }
   .name {
+    grid-column: 2;
+    grid-row: 1;
     font-weight: 700;
     overflow-wrap: anywhere;
+  }
+  .who > .state {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    align-self: start;
+    position: relative;
+    z-index: 1;
+    max-width: 100%;
+    line-height: 20px;
+    border-radius: 6px;
+  }
+  /* A 44px touch target without changing the line's look. */
+  .who > .state::after {
+    content: "";
+    position: absolute;
+    inset: -6px -8px -18px -8px;
   }
   .state {
     font-size: 13px;
@@ -189,6 +224,13 @@ export const styles = css`
   }
   .state strong {
     color: color-mix(in srgb, var(--sev) 60%, var(--ac-text));
+  }
+  .state .i.h {
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+    vertical-align: -2px;
+    opacity: 0.7;
   }
   .actions {
     display: flex;
@@ -274,6 +316,209 @@ export const styles = css`
     border-radius: var(--ac-tile);
     font-size: 14px;
     background: color-mix(in srgb, var(--sev) 16%, var(--ac-pill));
+  }
+  /* History: a timeline of the lock or gate and its contact. */
+  .b-ok {
+    --band: var(--ac-ok);
+  }
+  .b-attention {
+    --band: var(--ac-attention);
+  }
+  .b-open {
+    --band: var(--ac-open);
+  }
+  .b-problem {
+    --band: var(--ac-problem);
+  }
+  .b-unknown {
+    --band: var(--ac-unknown);
+  }
+  dialog#history {
+    color: var(--ac-text);
+    background: var(--ac-surface);
+    border: 0;
+    border-radius: var(--ha-card-border-radius, 20px);
+    padding: 16px 16px 20px;
+    width: min(640px, calc(100vw - 24px));
+    max-height: 90dvh;
+    overflow: auto;
+    box-shadow: 0 16px 60px #0006;
+  }
+  dialog#history.bubble {
+    background: var(
+      --bubble-main-background-color,
+      var(--ha-card-background, var(--card-background-color, #fff))
+    );
+    border-radius: min(var(--bubble-border-radius, 32px), 28px);
+  }
+  dialog#history::backdrop {
+    background: #0007;
+  }
+  .history-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .history-head h2 {
+    flex: 1;
+    margin: 0 4px;
+    font-size: 20px;
+    font-weight: 800;
+    overflow-wrap: anywhere;
+  }
+  dialog#history button {
+    font: inherit;
+    color: inherit;
+    border: 0;
+    cursor: pointer;
+  }
+  dialog#history .close {
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    font-size: 24px;
+    line-height: 1;
+    background: var(--ac-pill);
+  }
+  .ranges {
+    display: flex;
+    gap: 6px;
+    margin: 10px 0 8px;
+  }
+  dialog#history .ranges button {
+    min-height: 44px;
+    min-width: 56px;
+    padding: 0 14px;
+    border-radius: 22px;
+    background: var(--ac-pill);
+    font-size: 14px;
+    font-weight: 700;
+  }
+  dialog#history .ranges button[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--ac-ok) 24%, var(--ac-pill));
+  }
+  .history-plot {
+    min-height: 72px;
+    touch-action: pan-y;
+  }
+  .history-plot .note {
+    margin: 24px 0;
+  }
+  .timeline {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .timeline .grid {
+    stroke: color-mix(in srgb, var(--ac-muted) 22%, transparent);
+  }
+  .timeline .axis {
+    fill: var(--ac-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .timeline .lane-label {
+    fill: var(--ac-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .timeline .track {
+    fill: color-mix(in srgb, var(--ac-text) 5%, transparent);
+  }
+  .timeline .band {
+    fill: color-mix(in srgb, var(--band) 78%, var(--ac-surface));
+  }
+  .timeline .band.b-gap {
+    fill: url(#ac-hatch);
+  }
+  .timeline .hatch-bg {
+    fill: color-mix(in srgb, var(--ac-unknown) 14%, var(--ac-surface));
+  }
+  .timeline .hatch {
+    stroke: color-mix(in srgb, var(--ac-unknown) 70%, transparent);
+    stroke-width: 2;
+  }
+  .timeline .cursor {
+    stroke: var(--ac-text);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 3;
+  }
+  .history-plot .hint {
+    margin: 24px 0;
+    text-align: center;
+    color: var(--ac-muted);
+  }
+  .when {
+    margin: 4px 4px 6px;
+    font-size: 13px;
+    color: var(--ac-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .lanes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 6px;
+  }
+  dialog#history .lane-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 2px 8px;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: var(--ac-tile);
+    background: var(--ac-pill);
+    text-align: start;
+  }
+  .swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: color-mix(
+      in srgb,
+      var(--band, transparent) 78%,
+      var(--ac-surface)
+    );
+  }
+  .lane-item .swatch {
+    grid-row: span 2;
+  }
+  .swatch.b-none {
+    box-shadow: inset 0 0 0 1.5px var(--ac-muted);
+  }
+  .swatch.b-gap {
+    background: repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--ac-unknown) 70%, transparent) 0 2px,
+      color-mix(in srgb, var(--ac-unknown) 14%, var(--ac-surface)) 2px 4px
+    );
+  }
+  .lane-name {
+    font-size: 12px;
+    color: var(--ac-muted);
+  }
+  .lane-item strong {
+    font-size: 15px;
+  }
+  .key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin: 12px 4px 0;
+    padding: 0;
+    list-style: none;
+    font-size: 12px;
+    color: var(--ac-muted);
+  }
+  .key li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .key .swatch {
+    border-radius: 3px;
   }
   @media (max-width: 400px) {
     ha-card {

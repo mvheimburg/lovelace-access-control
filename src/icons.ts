@@ -12,6 +12,7 @@ const paths: Record<string, SVGTemplateResult> = {
   up: svg`<path d="m6 15 6-6 6 6"></path>`,
   down: svg`<path d="m6 9 6 6 6-6"></path>`,
   stop: svg`<rect x="7" y="7" width="10" height="10" rx="1.5"></rect>`,
+  history: svg`<path d="M3 12h4l3-7 4 14 3-7h4"></path>`,
   spinner: svg`<path d="M21 12a9 9 0 1 1-6.2-8.56"></path>`,
 };
 

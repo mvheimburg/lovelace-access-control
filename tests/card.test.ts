@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import "../src/access-control-card";
 import { AccessControlCard } from "../src/access-control-card";
 import { CONFIG, fixture, settle, text } from "./fixtures";
@@ -343,4 +343,198 @@ it("controls a gate with up, stop and down, disabling the direction it is alread
   card.hass = { ...hass };
   await settle();
   expect(arrows()).toEqual(["open:off", "close:on"]);
+});
+
+describe("history", () => {
+  const HOUR = 3_600_000;
+  /** The fixture with recorder history for the front door and its contact. */
+  function withHistory(now: number, fail?: Error) {
+    const hass = fixture();
+    const s = (ms: number) => ms / 1000;
+    const rows: Record<string, unknown[]> = {
+      "lock.front": [
+        { s: "locked", lu: s(now - 20 * HOUR) },
+        { s: "unavailable", lu: s(now - 12 * HOUR) },
+        { s: "unlocked", lu: s(now - 8 * HOUR) },
+      ],
+      "binary_sensor.front_contact": [
+        { s: "off", lu: s(now - 20 * HOUR) },
+        { s: "on", lu: s(now - 7 * HOUR) },
+        { s: "off", lu: s(now - 6 * HOUR) },
+      ],
+      "cover.gate": [{ s: "open", lu: s(now - 3 * HOUR) }],
+    };
+    const history = vi.fn(async (m: Record<string, unknown>) => {
+      if (fail) throw fail;
+      return Object.fromEntries(
+        (m.entity_ids as string[]).map((id) => [id, rows[id] ?? []]),
+      );
+    });
+    hass.callWS = history as HomeAssistant["callWS"];
+    return { hass, history };
+  }
+  const lanes = (root: ShadowRoot) =>
+    [...root.querySelectorAll("#history .lane-item")].map((i) =>
+      i.textContent!.replace(/\s+/g, " ").trim(),
+    );
+  async function open(root: ShadowRoot, entity: string) {
+    row(root, entity)
+      .querySelector<HTMLButtonElement>("[data-history]")!
+      .click();
+    await vi.waitFor(() =>
+      expect(root.querySelector(".timeline")).not.toBeNull(),
+    );
+  }
+  /** Moves the pointer to `hoursAgo` on a 24-hour timeline. */
+  function point(root: ShadowRoot, hoursAgo: number) {
+    const svg = root.querySelector<SVGSVGElement>(".timeline")!;
+    const box = svg.getBoundingClientRect();
+    const width = svg.viewBox.baseVal.width;
+    const x = 22 + ((24 - hoursAgo) / 24) * (width - 44);
+    root.querySelector(".history-plot")!.dispatchEvent(
+      new PointerEvent("pointermove", {
+        clientX: box.left + (x / width) * box.width,
+      }),
+    );
+  }
+
+  it("opens a door's timeline of lock and contact from its state line", async () => {
+    const now = Date.now();
+    const { hass, history } = withHistory(now);
+    const { card, root } = await mount(hass);
+    const info: string[] = [];
+    card.addEventListener("hass-more-info", (e) =>
+      info.push((e as CustomEvent).detail.entityId),
+    );
+    // The name still opens Home Assistant's dialog, not the history.
+    row(root, "lock.front").querySelector<HTMLButtonElement>(".info")!.click();
+    expect(info).toEqual(["lock.front"]);
+    expect(history).not.toHaveBeenCalled();
+    const state = row(root, "lock.front").querySelector("[data-history]")!;
+    expect(state.getAttribute("aria-label")).toBe(
+      "Locked · door closed · Hall. History of Front door",
+    );
+    await open(root, "lock.front");
+    const dialog = root.querySelector<HTMLDialogElement>("#history")!;
+    expect(dialog.open).toBe(true);
+    expect(text(root, "#history-title")).toBe("Front door: history");
+    expect(history).toHaveBeenCalledTimes(1);
+    const message = history.mock.calls[0][0];
+    expect(message).toMatchObject({
+      type: "history/history_during_period",
+      entity_ids: ["lock.front", "binary_sensor.front_contact"],
+      minimal_response: true,
+      no_attributes: true,
+      significant_changes_only: false,
+    });
+    expect(Date.parse(String(message.start_time))).toBeCloseTo(
+      now - 24 * HOUR,
+      -4,
+    );
+    expect(
+      [...root.querySelectorAll(".timeline .lane")].map(
+        (l) => (l as SVGElement).dataset.lane,
+      ),
+    ).toEqual(["lock", "contact"]);
+    // Each record is a band up to the next; the current state closes the last at "now".
+    expect(
+      [...root.querySelectorAll('.timeline [data-lane="lock"] .band')].map(
+        (b) => b.getAttribute("class"),
+      ),
+    ).toEqual(["band b-ok", "band b-gap", "band b-attention"]);
+    expect(lanes(root)).toEqual(["Lock Locked", "Door Closed"]);
+    expect(text(root, ".when")).toBe("Now");
+  });
+
+  it("reads each lane's state under the pointer, with a gap while silent", async () => {
+    const now = Date.now();
+    const { hass } = withHistory(now);
+    const { root } = await mount(hass);
+    await open(root, "lock.front");
+    const gap = root.querySelector<SVGRectElement>(".timeline .b-gap")!;
+    expect(gap.dataset.state).toBe("unavailable");
+    point(root, 16);
+    await settle();
+    expect(lanes(root)).toEqual(["Lock Locked", "Door Closed"]);
+    expect(text(root, ".when")).toMatch(/\d/);
+    expect(root.querySelector(".timeline .cursor")).not.toBeNull();
+    point(root, 10);
+    await settle();
+    expect(lanes(root)).toEqual(["Lock Not responding", "Door Closed"]);
+    point(root, 6.5);
+    await settle();
+    expect(lanes(root)).toEqual(["Lock Unlocked", "Door Open"]);
+    root
+      .querySelector(".history-plot")!
+      .dispatchEvent(new PointerEvent("pointerleave"));
+    await settle();
+    expect(lanes(root)).toEqual(["Lock Locked", "Door Closed"]);
+  });
+
+  it("changes range and opens a lane's details, closing the history first", async () => {
+    const now = Date.now();
+    const { hass, history } = withHistory(now);
+    const { card, root } = await mount(hass);
+    await open(root, "lock.front");
+    root.querySelector<HTMLButtonElement>('[data-range="6"]')!.click();
+    await vi.waitFor(() => expect(history).toHaveBeenCalledTimes(2));
+    expect(Date.parse(String(history.mock.calls[1][0].start_time))).toBeCloseTo(
+      now - 6 * HOUR,
+      -4,
+    );
+    await settle();
+    expect(
+      root.querySelector('[data-range="6"]')!.getAttribute("aria-pressed"),
+    ).toBe("true");
+    const info: string[] = [];
+    card.addEventListener("hass-more-info", (e) =>
+      info.push((e as CustomEvent).detail.entityId),
+    );
+    root
+      .querySelector<HTMLButtonElement>('.lane-item[data-lane="contact"]')!
+      .click();
+    expect(info).toEqual(["binary_sensor.front_contact"]);
+    expect(root.querySelector<HTMLDialogElement>("#history")!.open).toBe(false);
+  });
+
+  it("shows a gate's own lane through the connection when callWS is missing", async () => {
+    const now = Date.now();
+    const { hass, history } = withHistory(now);
+    delete hass.callWS;
+    hass.connection = {
+      sendMessagePromise: history as never,
+    };
+    const { root } = await mount(hass);
+    await open(root, "cover.gate");
+    expect(history.mock.calls[0][0].entity_ids).toEqual(["cover.gate"]);
+    expect(lanes(root)).toEqual(["Gate Closed"]);
+    expect(
+      [...root.querySelectorAll(".timeline .band")].map((b) =>
+        b.getAttribute("class"),
+      ),
+    ).toEqual(["band b-open"]);
+  });
+
+  it("explains a failed history request in Bokmål", async () => {
+    const { hass } = withHistory(Date.now(), new Error("Recorder is off"));
+    hass.language = "nb";
+    hass.locale = { language: "nb-NO" };
+    const { root } = await mount(hass);
+    row(root, "lock.front")
+      .querySelector<HTMLButtonElement>("[data-history]")!
+      .click();
+    await vi.waitFor(() =>
+      expect(text(root, "#history [role=alert]")).toBe(
+        "Kunne ikke hente historikk: Recorder is off",
+      ),
+    );
+    expect(
+      [...root.querySelectorAll("[data-range]")].map((b) =>
+        b.textContent!.trim(),
+      ),
+    ).toEqual(["6 t", "24 t", "7 d"]);
+    expect(text(root, "#history-title")).toBe("Front door: historikk");
+    // Only the history reports it; no door row shows a failure.
+    expect(root.querySelectorAll("[role=alert]")).toHaveLength(1);
+  });
 });

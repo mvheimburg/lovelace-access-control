@@ -37,6 +37,11 @@ export interface HomeAssistant {
     target?: { entity_id: string | string[] },
     notifyOnError?: boolean,
   ): Promise<unknown>;
+  /** Websocket API; real Home Assistant offers both, the card uses whichever exists. */
+  callWS?<T>(message: Record<string, unknown>): Promise<T>;
+  connection?: {
+    sendMessagePromise<T>(message: Record<string, unknown>): Promise<T>;
+  };
 }
 
 /** A door or gate as configured: an entity ID, or an object that overrides pairing. */

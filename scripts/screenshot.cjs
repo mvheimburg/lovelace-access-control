@@ -68,7 +68,62 @@ function hass(variant) {
   };
 }
 
-async function shot(browser, errors, { file, theme, cards }) {
+/** Simulated recorder history for the front door, its contact and the gate. */
+function recorder(message) {
+  const start = Date.parse(message.start_time) / 1000;
+  const now = Date.now() / 1000;
+  const H = 3600;
+  const rows = {
+    "lock.front": [
+      ["locked", 30],
+      ["unlocked", 17],
+      ["locked", 16.5],
+      ["unavailable", 13],
+      ["locked", 11],
+      ["unlocked", 7],
+      ["jammed", 6.2],
+      ["unlocked", 5.9],
+      ["locked", 3],
+      ["unlocked", 0.6],
+      ["locked", 0.4],
+    ],
+    "binary_sensor.front_contact": [
+      ["off", 30],
+      ["on", 16.9],
+      ["off", 16.7],
+      ["unavailable", 13],
+      ["off", 11],
+      ["on", 6.8],
+      ["off", 6.5],
+      ["on", 0.55],
+      ["off", 0.5],
+    ],
+    "cover.gate": [
+      ["closed", 30],
+      ["open", 9],
+      ["closed", 8],
+    ],
+  };
+  // Like Home Assistant: the state at the start, then each change.
+  return Object.fromEntries(
+    message.entity_ids.map((id) => {
+      const all = (rows[id] ?? []).map(([s, ago]) => ({
+        s,
+        lu: now - ago * H,
+      }));
+      const before = all.filter((r) => r.lu < start).pop();
+      return [
+        id,
+        [
+          ...(before ? [{ ...before, lu: start }] : []),
+          ...all.filter((r) => r.lu >= start),
+        ],
+      ];
+    }),
+  );
+}
+
+async function shot(browser, errors, { file, theme, cards, history }) {
   const page = await browser.newPage({
     viewport: { width: 1000, height: 760 },
     deviceScaleFactor: 1,
@@ -81,6 +136,7 @@ async function shot(browser, errors, { file, theme, cards }) {
     type: "module",
     content: readFileSync(resolve(root, "dist/access-control-card.js"), "utf8"),
   });
+  await page.exposeFunction("recorder", recorder);
   await page.evaluate(async (cards) => {
     await customElements.whenDefined("access-control-card");
     for (const { hass, appearance, click } of cards) {
@@ -92,7 +148,11 @@ async function shot(browser, errors, { file, theme, cards }) {
         access_event: "event.doorbell_door_access",
         confirm_unlock: true,
       });
-      card.hass = { ...hass, callService: () => new Promise(() => {}) };
+      card.hass = {
+        ...hass,
+        callService: () => new Promise(() => {}),
+        callWS: (message) => window.recorder(message),
+      };
       document.querySelector("main").append(card);
       await card.updateComplete;
       if (click) {
@@ -101,6 +161,21 @@ async function shot(browser, errors, { file, theme, cards }) {
       }
     }
   }, cards);
+  if (history) {
+    await page.evaluate(async (entity) => {
+      const card = document.querySelector("access-control-card");
+      card.shadowRoot
+        .querySelector(`[data-entity="${entity}"] [data-history]`)
+        .click();
+      await new Promise((r) => setTimeout(r, 400));
+    }, history);
+    const box = await page
+      .locator("access-control-card .timeline")
+      .first()
+      .boundingBox();
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4);
+    await page.waitForTimeout(200);
+  }
   await page.screenshot({ path: resolve(root, "docs", file), fullPage: true });
 }
 
@@ -129,9 +204,15 @@ async function shot(browser, errors, { file, theme, cards }) {
         },
       ],
     });
+    await shot(browser, errors, {
+      file: "access-control-history.png",
+      theme: light,
+      cards: [{ hass: hass("night"), appearance: "default" }],
+      history: "lock.front",
+    });
     if (errors.length) throw new Error(`Browser errors: ${errors.join("; ")}`);
     console.log(
-      "Wrote docs/access-control-dark.png and docs/access-control-light.png with simulated Home Assistant data.",
+      "Wrote docs/access-control-dark.png, docs/access-control-light.png and docs/access-control-history.png with simulated Home Assistant data.",
     );
   } finally {
     await browser.close();
