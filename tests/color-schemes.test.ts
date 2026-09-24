@@ -205,3 +205,23 @@ it.each(["bright", "warm", "mint", "sky", "lavender"])(
     expect(hass.calls).toEqual([]);
   },
 );
+
+it("uses Bubble colors for the shared history surface and close control", async () => {
+  const card = document.createElement(
+    "access-control-card",
+  ) as unknown as Element;
+  card.style.cssText =
+    "--card-background-color: rgb(20, 20, 20); --secondary-background-color: rgb(30, 30, 30); --bubble-main-background-color: rgb(40, 50, 60); --bubble-secondary-background-color: rgb(70, 80, 90)";
+  card.setConfig({ ...config, appearance: "bubble" });
+  card.hass = fixture();
+  document.body.append(card);
+  await card.updateComplete;
+  const dialog = card.shadowRoot!.querySelector<HTMLDialogElement>("#history")!;
+  expect(getComputedStyle(dialog).backgroundColor).toBe("rgb(40, 50, 60)");
+  expect(
+    getComputedStyle(dialog.querySelector(".history-close")!).backgroundColor,
+  ).toBe("rgb(70, 80, 90)");
+  card.setConfig({ ...config, appearance: "default" });
+  await card.updateComplete;
+  expect(getComputedStyle(dialog).backgroundColor).toBe("rgb(20, 20, 20)");
+});

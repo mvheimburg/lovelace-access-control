@@ -346,6 +346,53 @@ it("controls a gate with up, stop and down, disabling the direction it is alread
 });
 
 describe("history", () => {
+  it("ignores a recorder reply after history closes and reopens", async () => {
+    const { hass, history } = withHistory(Date.now());
+    let rejectOld!: (reason: Error) => void;
+    history.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectOld = reject;
+        }),
+    );
+    const { root } = await mount(hass);
+    root.querySelector<HTMLButtonElement>("[data-history]")!.click();
+    await vi.waitFor(() => expect(history).toHaveBeenCalledTimes(1));
+    root.querySelector<HTMLDialogElement>("#history")!.close();
+    await settle();
+    root.querySelector<HTMLButtonElement>("[data-history]")!.click();
+    await vi.waitFor(() =>
+      expect(root.querySelector(".timeline")).not.toBeNull(),
+    );
+    rejectOld(new Error("Old failure"));
+    await settle();
+    expect(root.querySelector("#history [role=alert]")).toBeNull();
+    expect(root.querySelector(".timeline")).not.toBeNull();
+  });
+
+  it("retries a failed recorder request and returns focus to the reading", async () => {
+    const { hass, history } = withHistory(Date.now());
+    history.mockRejectedValueOnce(new Error("Recorder offline"));
+    const { root } = await mount(hass);
+    const trigger = root.querySelector<HTMLButtonElement>("[data-history]")!;
+    trigger.focus();
+    trigger.click();
+    await vi.waitFor(() =>
+      expect(text(root, "#history [role=alert] span")).toContain(
+        "Recorder offline",
+      ),
+    );
+    const retry = root.querySelector<HTMLButtonElement>("[data-retry]");
+    expect(retry).not.toBeNull();
+    retry!.click();
+    await vi.waitFor(() =>
+      expect(root.querySelector(".timeline")).not.toBeNull(),
+    );
+    expect(history).toHaveBeenCalledTimes(2);
+    root.querySelector<HTMLButtonElement>("[data-close-history]")!.click();
+    await vi.waitFor(() => expect(root.activeElement).toBe(trigger));
+  });
+
   const HOUR = 3_600_000;
   /** The fixture with recorder history for the front door and its contact. */
   function withHistory(now: number, fail?: Error) {
@@ -432,7 +479,7 @@ describe("history", () => {
       -4,
     );
     expect(
-      [...root.querySelectorAll(".timeline .lane")].map(
+      [...root.querySelectorAll(".timeline .band-lane")].map(
         (l) => (l as SVGElement).dataset.lane,
       ),
     ).toEqual(["lock", "contact"]);
@@ -443,7 +490,10 @@ describe("history", () => {
       ),
     ).toEqual(["band b-ok", "band b-gap", "band b-attention"]);
     expect(lanes(root)).toEqual(["Lock Locked", "Door Closed"]);
-    expect(text(root, ".when")).toBe("Now");
+    expect(
+      getComputedStyle(root.querySelector("#history .lane-item")!).borderStyle,
+    ).toBe("none");
+    expect(text(root, ".history-when")).toBe("Now");
   });
 
   it("reads each lane's state under the pointer, with a gap while silent", async () => {
@@ -456,7 +506,7 @@ describe("history", () => {
     point(root, 16);
     await settle();
     expect(lanes(root)).toEqual(["Lock Locked", "Door Closed"]);
-    expect(text(root, ".when")).toMatch(/\d/);
+    expect(text(root, ".history-when")).toMatch(/\d/);
     expect(root.querySelector(".timeline .cursor")).not.toBeNull();
     point(root, 10);
     await settle();
@@ -559,7 +609,7 @@ describe("history", () => {
       .querySelector<HTMLButtonElement>("[data-history]")!
       .click();
     await vi.waitFor(() =>
-      expect(text(root, "#history [role=alert]")).toBe(
+      expect(text(root, "#history [role=alert] span")).toBe(
         "Kunne ikke hente historikk: Recorder is off",
       ),
     );

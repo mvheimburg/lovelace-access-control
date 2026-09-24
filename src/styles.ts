@@ -340,77 +340,25 @@ export const styles = css`
   .b-unknown {
     --band: var(--ac-unknown);
   }
-  dialog#history {
-    color: var(--ac-text);
-    background: var(--ac-surface);
-    border: 0;
-    border-radius: var(--ha-card-border-radius, 20px);
-    padding: 16px 16px 20px;
-    width: min(640px, calc(100vw - 24px));
-    max-height: 90dvh;
-    overflow: auto;
-    box-shadow: 0 16px 60px #0006;
+  :host {
+    --history-text: var(--ac-text);
+    --history-muted: var(--ac-muted);
+    --history-surface: var(
+      --ha-card-background,
+      var(--card-background-color, #fff)
+    );
+    --history-pill: var(--secondary-background-color, #f3f2ee);
   }
-  dialog#history.bubble {
-    background: var(
+  ha-card.bubble dialog#history {
+    --history-surface-color: var(
       --bubble-main-background-color,
       var(--ha-card-background, var(--card-background-color, #fff))
     );
-    border-radius: min(var(--bubble-border-radius, 32px), 28px);
-  }
-  dialog#history::backdrop {
-    background: #0007;
-  }
-  .history-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .history-head h2 {
-    flex: 1;
-    margin: 0 4px;
-    font-size: 20px;
-    font-weight: 800;
-    overflow-wrap: anywhere;
-  }
-  dialog#history button {
-    font: inherit;
-    color: inherit;
-    border: 0;
-    cursor: pointer;
-  }
-  dialog#history .close {
-    flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    font-size: 24px;
-    line-height: 1;
-    background: var(--ac-pill);
-  }
-  .ranges {
-    display: flex;
-    gap: 6px;
-    margin: 10px 0 8px;
-  }
-  dialog#history .ranges button {
-    min-height: 44px;
-    min-width: 56px;
-    padding: 0 14px;
-    border-radius: 22px;
-    background: var(--ac-pill);
-    font-size: 14px;
-    font-weight: 700;
-  }
-  dialog#history .ranges button[aria-pressed="true"] {
-    background: color-mix(in srgb, var(--ac-ok) 24%, var(--ac-pill));
-  }
-  .history-plot {
-    min-height: 72px;
-    touch-action: pan-y;
-  }
-  .history-plot .note {
-    margin: 24px 0;
+    --history-pill-color: var(
+      --bubble-secondary-background-color,
+      var(--secondary-background-color, #f3f2ee)
+    );
+    --history-radius: min(var(--bubble-border-radius, 32px), 28px);
   }
   .timeline {
     display: block;
@@ -437,7 +385,7 @@ export const styles = css`
     fill: color-mix(in srgb, var(--band) 78%, var(--ac-surface));
   }
   .timeline .band.b-gap {
-    fill: url(#ac-hatch);
+    fill: url(#history-hatch);
   }
   .timeline .hatch-bg {
     fill: color-mix(in srgb, var(--ac-unknown) 14%, var(--ac-surface));
@@ -456,7 +404,7 @@ export const styles = css`
     text-align: center;
     color: var(--ac-muted);
   }
-  .when {
+  .history-when {
     margin: 4px 4px 6px;
     font-size: 13px;
     color: var(--ac-muted);
@@ -468,6 +416,10 @@ export const styles = css`
     gap: 6px;
   }
   dialog#history .lane-item {
+    border: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
     display: grid;
     grid-template-columns: auto 1fr;
     align-items: center;

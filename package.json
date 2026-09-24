@@ -1,6 +1,6 @@
 {
   "name": "lovelace-access-control",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Lovelace card for the doors and gates of the house",
   "type": "module",
   "scripts": {
@@ -24,5 +24,8 @@
     "typescript-eslint": "^8.57.0",
     "vite": "^7.1.0",
     "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "lovelace-card-history": "file:vendor/lovelace-card-history-0.2.0.tgz"
   }
 }

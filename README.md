@@ -201,3 +201,9 @@ locked doors:
 my_theme:
   state-lock-locked-color: "var(--grey-color)"
 ```
+
+History uses the bundled `lovelace-card-history` library; no additional Lovelace
+resource is needed. Its recorder dialog offers 6 h, 24 h and 7 d, pointer
+readouts, localized labels, gaps for unavailable states and entity details from
+the legend. Failed requests offer **Try again**; closing returns keyboard focus
+to the reading that opened it.

@@ -1,3 +1,13 @@
+import {
+  HistoryController,
+  historyDialog,
+  openHistoryDialog,
+  historyFormat,
+  historyStrings,
+  historyStyles,
+  timeline,
+  timelineTimeAt,
+} from "lovelace-card-history";
 import { applyColorScheme } from "./color-schemes";
 import { LitElement, html, nothing } from "lit";
 import { validateConfig } from "./config";
@@ -5,18 +15,15 @@ import { icon } from "./icons";
 import {
   band,
   loadHistory,
-  RANGES,
   stateAt,
   type Band,
   type Lane,
   type LaneKind,
-  type Range,
 } from "./history";
 import { formatLocale, localize, type MessageKey } from "./localize";
 import { candidates, overall, resolve } from "./model";
 import { stateColor } from "./state-colors";
 import { styles } from "./styles";
-import { timeAt, timeline } from "./timeline";
 import type { CardConfig, HomeAssistant, Resolved, Tone } from "./types";
 import "./editor";
 
@@ -66,7 +73,7 @@ const HERO_ICON: Record<Tone, string> = {
  * entities are the authority; the card only calls their services.
  */
 export class AccessControlCard extends LitElement {
-  static styles = styles;
+  static styles = [historyStyles, styles];
   private config?: CardConfig;
   private ha?: HomeAssistant;
   /** Entity IDs with a request in flight; "*" is Lock all. */
@@ -75,15 +82,9 @@ export class AccessControlCard extends LitElement {
   private confirming?: { entity: string; action: "unlock" | "open" };
   /** History dialog: the door or gate, range, loaded lanes and hovered time. */
   private historyItem?: Resolved;
-  private range: Range = 24;
-  private lanes?: Lane[];
-  private window?: [number, number];
-  private historyLoading = false;
-  private historyError = "";
-  private hover?: number;
-  private historyTicket = 0;
-  private plotWidth = 600;
-  private resize?: ResizeObserver;
+  private history = new HistoryController<Lane[]>(this, (range, end) =>
+    loadHistory(this.ha!, this.sources(this.historyItem!), range, end),
+  );
 
   static getConfigElement() {
     return document.createElement("access-control-card-editor");
@@ -106,23 +107,11 @@ export class AccessControlCard extends LitElement {
   }
   disconnectedCallback() {
     super.disconnectedCallback();
-    this.resize?.disconnect();
-    this.resize = undefined;
   }
   protected updated() {
-    const plot = this.shadowRoot?.querySelector(".history-plot");
-    if (!plot || this.resize) return;
-    this.resize = new ResizeObserver(([entry]) => {
-      const width = Math.round(entry.contentRect.width);
-      // Redraw next frame, outside the observer's own layout pass.
-      if (width > 0 && Math.abs(width - this.plotWidth) > 4)
-        requestAnimationFrame(() => {
-          this.plotWidth = width;
-          this.requestUpdate();
-        });
-    });
-    this.resize.observe(plot);
+    this.history.observe(this.shadowRoot?.querySelector(".history-plot"));
   }
+
   set hass(value: HomeAssistant) {
     this.ha = value;
     this.requestUpdate();
@@ -386,7 +375,7 @@ export class AccessControlCard extends LitElement {
             data-history
             aria-label=${`${status}. ${this.t("historyOf", { name: item.name })}`}
             title=${this.t("history")}
-            @click=${() => void this.openHistory(item)}
+            @click=${(event: Event) => void this.openHistory(item, event)}
           >
             <strong>${label}</strong>${rest}${icon("history", "h")}
           </button>
@@ -411,52 +400,22 @@ export class AccessControlCard extends LitElement {
         : []),
     ];
   }
-  private async openHistory(item: Resolved) {
+  private async openHistory(item: Resolved, event: Event) {
     this.historyItem = item;
-    this.lanes = this.window = undefined;
-    this.requestUpdate();
-    await this.updateComplete;
-    const dialog =
-      this.shadowRoot?.querySelector<HTMLDialogElement>("#history");
-    if (dialog && !dialog.open) dialog.showModal();
-    void this.loadHistory();
+    await openHistoryDialog(
+      this.history,
+      this.shadowRoot,
+      this,
+      this.t("historyFailed"),
+      event.currentTarget as HTMLElement,
+    );
   }
+
   private closeHistory() {
-    this.historyTicket++;
-    this.lanes = this.window = this.hover = undefined;
-    this.historyLoading = false;
-    this.historyError = "";
+    this.history.reset();
     this.shadowRoot?.querySelector<HTMLDialogElement>("#history")?.close();
   }
-  private async loadHistory(range: Range = this.range) {
-    const item = this.historyItem;
-    if (!this.ha || !item) return;
-    const ticket = ++this.historyTicket;
-    this.range = range;
-    this.historyLoading = true;
-    this.historyError = "";
-    this.hover = undefined;
-    this.requestUpdate();
-    const end = Date.now();
-    try {
-      const lanes = await loadHistory(this.ha, this.sources(item), range, end);
-      if (ticket !== this.historyTicket) return;
-      this.lanes = lanes;
-      this.window = [end - range * 3_600_000, end];
-    } catch (error) {
-      if (ticket !== this.historyTicket) return;
-      this.lanes = this.window = undefined;
-      this.historyError = `${this.t("historyFailed")}: ${
-        error instanceof Error
-          ? error.message
-          : typeof error === "object" && error && "message" in error
-            ? String(error.message)
-            : String(error)
-      }`;
-    }
-    this.historyLoading = false;
-    this.requestUpdate();
-  }
+
   private laneLabel(item: Resolved, kind: LaneKind): string {
     if (kind === "lock") return this.t("laneLock");
     if (kind === "gate") return this.t("laneGate");
@@ -464,37 +423,10 @@ export class AccessControlCard extends LitElement {
   }
   private historyDialog() {
     const item = this.historyItem;
-    const locale = formatLocale(this.ha);
-    const hour12 =
-      this.ha?.locale?.time_format === "12"
-        ? true
-        : this.ha?.locale?.time_format === "24"
-          ? false
-          : undefined;
-    const time = (ms: number, withDay: boolean) =>
-      new Intl.DateTimeFormat(
-        locale,
-        withDay
-          ? { weekday: "short", day: "numeric" }
-          : { hour: "2-digit", minute: "2-digit", hour12 },
-      ).format(ms);
-    const detailed = (ms: number) =>
-      new Intl.DateTimeFormat(locale, {
-        weekday: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12,
-      }).format(ms);
-    const span = (hours: number) =>
-      new Intl.NumberFormat(locale, {
-        style: "unit",
-        unit: hours < 48 ? "hour" : "day",
-        unitDisplay: "short",
-      }).format(hours < 48 ? hours : hours / 24);
-    const lanes = this.lanes;
-    const window = this.window;
-    const at = this.hover;
-    const title = item ? this.t("historyTitle", { name: item.name }) : "";
+    const title = item
+      ? this.t("historyTitle", { name: item.name })
+      : this.t("history");
+    const format = historyFormat(this.ha);
     const keys: Band[] =
       item?.kind === "gate"
         ? ["ok", "opening", "open", "closing", "gap"]
@@ -514,99 +446,58 @@ export class AccessControlCard extends LitElement {
       }[key as string];
       return state ? this.bandColor(item.entity, state, key) : undefined;
     };
-    return html`<dialog
-      id="history"
-      class=${this.config?.appearance === "bubble" ? "bubble" : ""}
-      aria-labelledby="history-title"
-      @close=${() => {
-        this.historyTicket++;
-        this.hover = undefined;
-      }}
-    >
-      <div class="history-head">
-        <h2 id="history-title">${title}</h2>
-        <button
-          class="close"
-          data-close
-          aria-label=${this.t("closeDialog")}
-          title=${this.t("closeDialog")}
-          @click=${() => this.closeHistory()}
-        >
-          ×
-        </button>
-      </div>
-      <div class="ranges" role="group" aria-label=${this.t("history")}>
-        ${RANGES.map(
-          (hours) =>
-            html`<button
-              data-range=${hours}
-              aria-pressed=${String(this.range === hours)}
-              @click=${() => void this.loadHistory(hours)}
-            >
-              ${span(hours)}
-            </button>`,
-        )}
-      </div>
-      <div
-        class="history-plot"
-        aria-busy=${String(this.historyLoading)}
-        @pointermove=${(e: PointerEvent) => {
-          const svg = (e.currentTarget as HTMLElement).querySelector("svg");
-          if (!svg || !window) return;
-          this.hover = timeAt(e, svg, window[0], window[1]);
-          this.requestUpdate();
-        }}
-        @pointerleave=${() => {
-          this.hover = undefined;
-          this.requestUpdate();
-        }}
-      >
-        ${
-          this.historyError
-            ? html`<p class="note sev-problem" role="alert">
-                ${icon("warning", "s")}${this.historyError}
-              </p>`
-            : !lanes || !window || !item
-              ? html`<p class="hint" role="status">${this.t("loading")}</p>`
-              : lanes.every((l) => !l.marks.length)
-                ? html`<p class="hint">${this.t("noHistory")}</p>`
-                : timeline(
-                    lanes,
-                    window[0],
-                    window[1],
-                    at,
-                    {
-                      time,
-                      lane: (lane) => this.laneLabel(item, lane.kind),
-                      label: title,
-                      color: (lane, state) =>
-                        this.bandColor(
-                          lane.entityId,
-                          state,
-                          band(lane.kind, state),
-                        ),
-                    },
-                    Math.max(280, this.plotWidth),
-                  )
-        }
-      </div>
-      <p class="when" aria-live="polite">
-        ${at === undefined ? this.t("now") : detailed(at)}
-      </p>
-      <div class="lanes">
-        ${(item && lanes ? lanes : []).map((lane) => {
+    return historyDialog(this.history, {
+      strings: {
+        ...historyStrings(this.ha),
+        history: title,
+        loading: this.t("loading"),
+        empty: this.t("noHistory"),
+        closeHistory: this.t("closeDialog"),
+      },
+      format,
+      chart: (lanes, window, at, width) =>
+        timeline(
+          lanes,
+          window[0],
+          window[1],
+          at,
+          {
+            time: format.time,
+            lane: (lane) => this.laneLabel(item!, lane.kind as LaneKind),
+            label: title,
+            tone: (lane, state) => band(lane.kind as LaneKind, state),
+            color: (lane, state) =>
+              this.bandColor(
+                lane.entityId,
+                state,
+                band(lane.kind as LaneKind, state),
+              ),
+          },
+          width,
+        ),
+      isEmpty: (lanes) =>
+        lanes.every(
+          (lane) => !lane.marks.some(([, state]) => state !== undefined),
+        ),
+      timeAt: (event, svg, window) =>
+        timelineTimeAt(event, svg, window[0], window[1]),
+      legend: () => [],
+      select: (entityId) => this.moreInfo(entityId),
+      renderLegend: (lanes, at) => html`
+        ${(item ? lanes : []).map((lane) => {
           const state =
             at === undefined
               ? lane.marks[lane.marks.length - 1]?.[1]
               : stateAt(lane, at);
-          const tone = state === undefined ? "none" : band(lane.kind, state);
+          const tone =
+            state === undefined ? "none" : band(lane.kind as LaneKind, state);
           const color =
             state === undefined || tone === "gap"
               ? undefined
               : this.bandColor(lane.entityId, state, tone);
           return html`<button
             class="lane-item"
-            data-lane=${lane.kind}
+            data-lane=${lane.kind as LaneKind}
             @click=${() => {
               this.closeHistory();
               this.moreInfo(lane.entityId);
@@ -616,27 +507,34 @@ export class AccessControlCard extends LitElement {
               class=${`swatch b-${tone}`}
               style=${color ? `--band: ${color}` : ""}
             ></span>
-            <span class="lane-name">${this.laneLabel(item!, lane.kind)}</span>
-            <strong>${this.laneState(lane.kind, state)}</strong>
+            <span class="lane-name"
+              >${this.laneLabel(item!, lane.kind as LaneKind)}</span
+            >
+            <strong>${this.laneState(lane.kind as LaneKind, state)}</strong>
           </button>`;
         })}
-      </div>
-      <ul class="key">
-        ${keys.map(
-          (key) =>
-            html`<li>
-              <span
-                class=${`swatch b-${key}`}
-                style=${keyColor(key) ? `--band: ${keyColor(key)}` : ""}
-              ></span
-              >${this.t(
-                key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key],
-              )}
-            </li>`,
-        )}
-      </ul>
-    </dialog>`;
+      `,
+      footer: html`
+        <ul class="key">
+          ${keys.map(
+            (key) =>
+              html`<li>
+                <span
+                  class=${`swatch b-${key}`}
+                  style=${keyColor(key) ? `--band: ${keyColor(key)}` : ""}
+                ></span
+                >${this.t(
+                  key === "ok" && item?.kind === "gate"
+                    ? "keyClosed"
+                    : KEY[key],
+                )}
+              </li>`,
+          )}
+        </ul>
+      `,
+    });
   }
+
   private renderConfirm(item: Resolved) {
     const unlock = this.confirming!.action === "unlock";
     return html`<div

@@ -1,3 +1,80 @@
+/** Loading recorder history for charts and timelines. */
+/**
+ * A connection for history requests: `hass.callWS` when Home Assistant offers
+ * it, else its websocket connection.
+ */
+function historyConnection(hass) {
+    return {
+        sendMessagePromise: (message) => {
+            if (hass.callWS)
+                return hass.callWS(message);
+            if (hass.connection)
+                return hass.connection.sendMessagePromise(message);
+            return Promise.reject(new Error("No connection to Home Assistant"));
+        },
+    };
+}
+/** The ranges every history view offers, in hours. */
+const RANGES = [6, 24, 168];
+const SILENT$2 = new Set(["unavailable", "unknown", ""]);
+/**
+ * Raw history of `ids` since `start`, one request. With `attributes`, each row
+ * carries its attributes (needed to read one), which costs a larger reply.
+ */
+async function rawRows(connection, ids, start, attributes = false) {
+    if (!ids.length)
+        return {};
+    return ((await connection.sendMessagePromise({
+        type: "history/history_during_period",
+        start_time: new Date(start).toISOString(),
+        entity_ids: ids,
+        minimal_response: !attributes,
+        no_attributes: !attributes,
+        significant_changes_only: false,
+    })) ?? {});
+}
+/** Raw state history of `ids` since `start`, as marks. */
+async function rawHistory(connection, ids, start) {
+    const reply = await rawRows(connection, ids, start);
+    return Object.fromEntries(ids.map((id) => [
+        id,
+        (reply?.[id] ?? []).map((row) => [
+            Math.max(start, (row.lu ?? row.lc ?? 0) * 1000),
+            row.s,
+        ]),
+    ]));
+}
+/** The state history of each entity as timeline lanes, ending with its current state. */
+async function loadLanes(connection, lanes, states, hours, options = {}) {
+    const now = options.now ?? Date.now();
+    const start = now - hours * 3600000;
+    const raw = await rawHistory(connection, [...new Set(lanes.map((l) => l.entityId))], start);
+    return lanes.map((lane) => {
+        const marks = [...(raw[lane.entityId] ?? [])];
+        const current = states[lane.entityId];
+        if (current)
+            marks.push([now, current.state]);
+        // A silent spell is a gap, whatever the entity called it.
+        return {
+            ...lane,
+            marks: marks.map(([t, s]) => [
+                t,
+                s === undefined || SILENT$2.has(s) ? undefined : s,
+            ]),
+        };
+    });
+}
+/** The state in force at `time` in a series or lane. */
+function stateAt(item, time) {
+    let value;
+    for (const [t, v] of item.states ?? item.marks ?? []) {
+        if (t > time)
+            break;
+        value = v;
+    }
+    return value;
+}
+
 /**
  * @license
  * Copyright 2019 Google LLC
@@ -23,6 +100,790 @@ const t$1=globalThis,i$2=t=>t,s$1=t$1.trustedTypes,e$1=s$1?s$1.createPolicy("lit
  * Copyright 2017 Google LLC
  * SPDX-License-Identifier: BSD-3-Clause
  */const s=globalThis;let i$1 = class i extends y$1{constructor(){super(...arguments),this.renderOptions={host:this},this._$Do=void 0;}createRenderRoot(){const t=super.createRenderRoot();return this.renderOptions.renderBefore??=t.firstChild,t}update(t){const r=this.render();this.hasUpdated||(this.renderOptions.isConnected=this.isConnected),super.update(t),this._$Do=D(r,this.renderRoot,this.renderOptions);}connectedCallback(){super.connectedCallback(),this._$Do?.setConnected(true);}disconnectedCallback(){super.disconnectedCallback(),this._$Do?.setConnected(false);}render(){return E}};i$1._$litElement$=true,i$1["finalized"]=true,s.litElementHydrateSupport?.({LitElement:i$1});const o=s.litElementPolyfillSupport;o?.({LitElement:i$1});(s.litElementVersions??=[]).push("4.2.2");
+
+/** Room left and right of the bands, so edge time labels are not clipped. */
+const SIDE = 22, TOP = 4, LABEL = 18, BAND = 24, GAP = 12, AXIS = 24;
+function every(hours, narrow) {
+    if (hours <= 6)
+        return narrow ? 2 : 1;
+    if (hours <= 24)
+        return narrow ? 6 : 4;
+    return narrow ? 48 : 24;
+}
+/**
+ * One lane per entity with a colored band per state, from `start` to `end`.
+ * A silent (unavailable) spell is hatched; time before any record is empty.
+ */
+function timeline(lanes, start, end, hover, text, W = 600) {
+    const RIGHT = W - SIDE;
+    const H = TOP +
+        lanes.length * (LABEL + BAND) +
+        Math.max(0, lanes.length - 1) * GAP +
+        AXIS;
+    const bottom = H - AXIS;
+    const x = (t) => SIDE +
+        ((Math.min(Math.max(t, start), end) - start) / (end - start)) *
+            (RIGHT - SIDE);
+    const step = every((end - start) / 3600000, W < 480);
+    const ticks = [];
+    const hour = new Date(start);
+    hour.setMinutes(0, 0, 0);
+    let midnights = 0;
+    for (let t = hour.getTime(); t <= end; t += 3600000) {
+        if (t < start)
+            continue;
+        const h = new Date(t).getHours();
+        if (step >= 24 ? h === 0 && midnights++ % (step / 24) === 0 : h % step === 0)
+            ticks.push(t);
+    }
+    const top = (i) => TOP + i * (LABEL + BAND + GAP);
+    return w `<svg class="timeline" viewBox="0 0 ${W} ${H}" role="img" aria-label=${text.label}>
+    <title>${text.label}</title>
+    <defs>
+      <pattern id="history-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <rect class="hatch-bg" width="6" height="6"></rect>
+        <line class="hatch" x1="0" y1="0" x2="0" y2="6"></line>
+      </pattern>
+    </defs>
+    ${ticks.map((t) => w `<line class="grid" x1=${x(t)} x2=${x(t)} y1=${TOP} y2=${bottom}></line><text class="axis" x=${x(t)} y=${bottom + 17} text-anchor="middle">${text.time(t, step >= 24)}</text>`)}
+    ${lanes.map((lane, i) => {
+        const y = top(i) + LABEL;
+        return w `<g class="band-lane" data-lane=${text.laneId?.(lane) ?? lane.kind}>
+        <text class="lane-label" x=${SIDE} y=${top(i) + 13}>${text.lane(lane)}</text>
+        <rect class="track" x=${SIDE} y=${y} width=${RIGHT - SIDE} height=${BAND} rx="4"></rect>
+        ${lane.marks.map(([t, state], j) => {
+            const from = x(t), to = x(lane.marks[j + 1]?.[0] ?? end);
+            if (to - from <= 0)
+                return A;
+            const tone = state === undefined ? "gap" : text.tone(lane, state);
+            const color = state === undefined ? undefined : text.color?.(lane, state);
+            const label = text.stateLabel?.(lane, state);
+            return w `<rect class=${`band b-${tone}`} data-state=${state ?? ""} style=${color ? `--band: ${color}` : ""} x=${from} y=${y} width=${to - from} height=${BAND}>${label ? w `<title>${text.lane(lane)}: ${label}</title>` : A}</rect>${label && to - from > label.length * 7 + 16 ? w `<text class=${`band-label b-${tone}`} x=${from + 8} y=${y + 16}>${label}</text>` : A}`;
+        })}
+      </g>`;
+    })}
+    ${hover === undefined ? A : w `<line class="cursor" x1=${x(hover)} x2=${x(hover)} y1=${TOP} y2=${bottom}></line>`}
+  </svg>`;
+}
+/** The time under a pointer over a timeline. */
+function timelineTimeAt(event, element, start, end) {
+    const box = element.getBoundingClientRect();
+    const W = element.viewBox?.baseVal?.width || box.width;
+    const px = ((event.clientX - box.left) / box.width) * W;
+    const ratio = (px - SIDE) / (W - 2 * SIDE);
+    return start + Math.min(1, Math.max(0, ratio)) * (end - start);
+}
+
+/**
+ * The state of one history view: its range, what it loaded for which window,
+ * the time under the pointer, loading and failure, and the plot's width.
+ *
+ * A reply that arrives after the range changed, the view was reset or the host
+ * left the page is dropped, so a slow request never overwrites a newer one.
+ */
+class HistoryController {
+    constructor(host, load, options = {}) {
+        this.host = host;
+        this.load = load;
+        this.loading = false;
+        this.error = "";
+        /** The plot's width in px, following its element (see `observe`). */
+        this.width = 600;
+        this.ticket = 0;
+        this.range = options.range ?? 24;
+        host.addController(this);
+    }
+    hostDisconnected() {
+        this.ticket++;
+        this.loading = false;
+        this.resize?.disconnect();
+        this.resize = this.observed = undefined;
+    }
+    /** Load `range` (the current one by default). The failure text is prefixed with `failed`. */
+    async reload(range = this.range, failed = "") {
+        const ticket = ++this.ticket;
+        this.range = range;
+        this.loading = true;
+        this.error = "";
+        this.hover = undefined;
+        this.host.requestUpdate();
+        const end = Date.now();
+        try {
+            const data = await this.load(range, end);
+            if (ticket !== this.ticket)
+                return;
+            this.data = data;
+            this.window = [end - range * 3600000, end];
+        }
+        catch (error) {
+            if (ticket !== this.ticket)
+                return;
+            this.data = this.window = undefined;
+            const message = error instanceof Error
+                ? error.message
+                : typeof error === "object" && error && "message" in error
+                    ? String(error.message)
+                    : String(error);
+            this.error = failed ? `${failed}: ${message}` : message;
+        }
+        this.loading = false;
+        this.host.requestUpdate();
+    }
+    /** Forget what was loaded and ignore replies still on their way. */
+    reset() {
+        this.ticket++;
+        this.data = this.window = this.hover = undefined;
+        this.loading = false;
+        this.error = "";
+        this.host.requestUpdate();
+    }
+    /** Stop listening for a reply without forgetting what is shown (a closed dialog). */
+    cancel() {
+        this.ticket++;
+        this.loading = false;
+        this.hover = undefined;
+    }
+    setHover(time) {
+        if (time === this.hover)
+            return;
+        this.hover = time;
+        this.host.requestUpdate();
+    }
+    /** Follow an element's width, so the chart is drawn at its real size. */
+    observe(element) {
+        if (!element || element === this.observed)
+            return;
+        this.resize?.disconnect();
+        this.observed = element;
+        this.resize = new ResizeObserver(([entry]) => {
+            const width = Math.round(entry.contentRect.width);
+            // Redraw next frame, outside the observer's own layout pass.
+            if (width > 0 && Math.abs(width - this.width) > 4)
+                requestAnimationFrame(() => {
+                    this.width = width;
+                    this.host.requestUpdate();
+                });
+        });
+        this.resize.observe(element);
+    }
+}
+
+/**
+ * The body of a history view, shared by a card's dialog and the history card:
+ * range buttons, the chart with a pointer readout, the time read, and a legend
+ * whose entries open each entity's more-info.
+ */
+function historyView(ctl, o) {
+    const { data, window: range, hover, error } = ctl;
+    const long = ctl.range > 48;
+    const legend = data !== undefined && range ? o.legend(data, hover) : [];
+    return b `<div
+      class="history-ranges"
+      role="group"
+      aria-label=${o.strings.ranges}
+    >
+      ${(o.ranges ?? RANGES).map((hours) => b `<button
+            class="history-range"
+            type="button"
+            data-range=${hours}
+            aria-pressed=${String(ctl.range === hours)}
+            @click=${() => void ctl.reload(hours, o.strings.failed)}
+          >
+            ${o.format.span(hours)}
+          </button>`)}
+    </div>
+    <div
+      class="history-plot"
+      aria-busy=${String(ctl.loading)}
+      @pointermove=${(e) => {
+        const svg = e.currentTarget.querySelector("svg");
+        if (!svg || !range || data === undefined)
+            return;
+        ctl.setHover(o.timeAt(e, svg, range, data));
+    }}
+      @pointerleave=${() => ctl.setHover(undefined)}
+    >
+      ${error
+        ? b `<div class="history-note failed" role="alert">
+              <span>${error}</span>
+              <button
+                class="history-range"
+                type="button"
+                data-retry
+                @click=${() => void ctl.reload(ctl.range, o.strings.failed)}
+              >
+                ${o.strings.retry}
+              </button>
+            </div>`
+        : data === undefined || !range
+            ? b `<p class="history-note" role="status">
+                ${o.strings.loading}
+              </p>`
+            : o.isEmpty(data)
+                ? b `<p class="history-note">${o.strings.empty}</p>`
+                : o.chart(data, range, hover, Math.max(280, ctl.width))}
+    </div>
+    ${data !== undefined && range && !error && !o.isEmpty(data)
+        ? b `<label class="history-inspector"
+            >${o.strings.inspect}
+            <input
+              type="range"
+              min=${range[0]}
+              max=${range[1]}
+              step=${(range[1] - range[0]) / 200}
+              .value=${String(hover ?? range[1])}
+              aria-valuetext=${o.format.moment(hover ?? range[1])}
+              @input=${(e) => ctl.setHover(Number(e.target.value))}
+            />
+          </label>`
+        : A}
+    <p class="history-when" aria-live="polite">
+      ${hover === undefined ? o.strings.now : long ? o.format.moment(hover) : o.format.time(hover)}
+    </p>
+    <div class="history-legend">
+      ${data !== undefined && o.renderLegend
+        ? o.renderLegend(data, hover)
+        : legend.map((entry) => b `<button
+                  class=${`history-item series-${entry.color}${entry.kind ? ` kind-${entry.kind}` : ""}`}
+                  type="button"
+                  data-series=${entry.entityId}
+                  title=${entry.title ?? A}
+                  @click=${(e) => o.select(entry.entityId, e)}
+                >
+                  <span class="swatch" aria-hidden="true"></span>
+                  <span class="label">${entry.name}</span>
+                  <strong>${entry.value}</strong>
+                </button>`)}
+    </div>`;
+}
+/** Close a dialog when its backdrop, outside the box, is clicked. */
+function backdrop(e) {
+    if (e.target !== e.currentTarget)
+        return;
+    const dialog = e.currentTarget;
+    const r = dialog.getBoundingClientRect();
+    if (e.clientX < r.left ||
+        e.clientX > r.right ||
+        e.clientY < r.top ||
+        e.clientY > r.bottom)
+        dialog.close();
+}
+/**
+ * A card's history dialog (`<dialog id="history">`). Open it with
+ * `openHistoryDialog`, which also starts loading.
+ */
+function historyDialog(ctl, o) {
+    const close = (e) => e.currentTarget
+        .closest("dialog")
+        ?.close();
+    return b `<dialog
+    id="history"
+    class="history-dialog"
+    aria-labelledby="history-title"
+    @click=${backdrop}
+    @close=${(e) => {
+        ctl.cancel();
+        // Back to what opened the history, for keyboard and screen reader users.
+        e.currentTarget.trigger?.focus?.();
+        o.closed?.();
+    }}
+  >
+    <div class="history-top">
+      <h2 class="history-title" id="history-title">
+        ${o.strings.history}${o.subtitle ? b ` <span class="history-subtitle">${o.subtitle}</span>` : A}
+      </h2>
+      ${o.headerActions ?? A}
+      <button
+        class="history-close"
+        type="button"
+        data-close-history
+        aria-label=${o.strings.closeHistory}
+        title=${o.strings.closeHistory}
+        @click=${close}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"></path>
+        </svg>
+      </button>
+    </div>
+    ${historyView(ctl, {
+        ...o,
+        // Home Assistant's more-info opens over the page: close the history first.
+        select: (id, e) => {
+            close(e);
+            o.select(id, e);
+        },
+    })}
+    ${o.footer ?? A}
+  </dialog>`;
+}
+/**
+ * Open the history dialog in `root` and load its data. Focus returns to
+ * `trigger` (the tapped reading) when the dialog closes.
+ */
+async function openHistoryDialog(ctl, root, host, failed, trigger) {
+    ctl.reset();
+    await host.updateComplete;
+    const dialog = root?.querySelector("dialog#history");
+    if (dialog)
+        dialog.trigger = trigger ?? undefined;
+    if (dialog && !dialog.open)
+        dialog.showModal();
+    ctl.observe(root?.querySelector(".history-plot"));
+    await ctl.reload(ctl.range, failed);
+}
+
+/** The history view's own words, in English and Norwegian Bokmål. */
+/** `nb` for Bokmål and its aliases (`nb-NO`, legacy `no`, `nn` → Bokmål), else `en`. */
+function historyLanguage(hass) {
+    const code = (hass?.language || hass?.locale?.language || "en")
+        .toLowerCase()
+        .replace(/_/g, "-")
+        .split("-")[0];
+    return ["nb", "no", "nn"].includes(code) ? "nb" : "en";
+}
+/**
+ * The locale for dates and numbers, kept apart from the dictionary: `en-GB`
+ * keeps its 24-hour clock, and Norwegian aliases format as Bokmål.
+ */
+function historyLocale(hass) {
+    const code = (hass?.language || hass?.locale?.language || "en")
+        .toLowerCase()
+        .replace(/_/g, "-")
+        .replace(/^(no|nn)(?=-|$)/, "nb");
+    try {
+        return Intl.getCanonicalLocales(code)[0] || "en";
+    }
+    catch {
+        return "en";
+    }
+}
+const en$2 = {
+    history: "History",
+    inspect: "Inspect time",
+    showHistory: "Show history",
+    closeHistory: "Close history",
+    ranges: "History ranges",
+    loading: "Loading history…",
+    empty: "No history for this period.",
+    failed: "Could not load history",
+    retry: "Try again",
+    now: "Now",
+    unavailable: "Unavailable",
+    on: "On",
+    off: "Off",
+    target: "target",
+    mode: "History view",
+    modeCard: "In the card",
+    modeMoreInfo: "Home Assistant's details",
+    modePanel: "Home Assistant's History page",
+};
+const nb$2 = {
+    history: "Historikk",
+    inspect: "Undersøk tidspunkt",
+    showHistory: "Vis historikk",
+    closeHistory: "Lukk historikk",
+    ranges: "Tidsrom",
+    loading: "Henter historikk …",
+    empty: "Ingen historikk for denne perioden.",
+    failed: "Kunne ikke hente historikk",
+    retry: "Prøv igjen",
+    now: "Nå",
+    unavailable: "Utilgjengelig",
+    on: "På",
+    off: "Av",
+    target: "ønsket",
+    mode: "Historikkvisning",
+    modeCard: "I kortet",
+    modeMoreInfo: "Home Assistants detaljer",
+    modePanel: "Home Assistants historikkside",
+};
+function historyStrings(hass) {
+    return historyLanguage(hass) === "nb" ? nb$2 : en$2;
+}
+
+/** Locale formatting for charts, following HA's language and 12/24-hour setting. */
+function historyFormat(hass) {
+    const locale = historyLocale(hass);
+    const format = hass?.locale?.time_format;
+    const hour12 = format === "12" ? true : format === "24" ? false : undefined;
+    const safe = (make, fallback) => {
+        try {
+            return make();
+        }
+        catch {
+            return fallback;
+        }
+    };
+    return {
+        locale,
+        /** A clock time, or a weekday and date on a multi-day axis. */
+        time: (ms, withDay = false) => safe(() => new Intl.DateTimeFormat(locale, withDay
+            ? { weekday: "short", day: "numeric" }
+            : { hour: "2-digit", minute: "2-digit", hour12 }).format(ms), new Date(ms).toLocaleTimeString()),
+        /** Day and time, for the readout above the legend on a multi-day range. */
+        moment: (ms) => safe(() => new Intl.DateTimeFormat(locale, {
+            weekday: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12,
+        }).format(ms), new Date(ms).toLocaleString()),
+        /** A fixed number of decimals, for axis ticks. */
+        number: (value, digits) => safe(() => new Intl.NumberFormat(locale, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+        }).format(value), value.toFixed(digits)),
+        /** A reading: up to `digits` decimals, and its unit. */
+        reading: (value, unit = "", digits = 1) => `${safe(() => new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(value), String(value))}${unit ? ` ${unit}` : ""}`,
+        /** A range button's label: "6 h", "24 t", "7 d". */
+        span: (hours) => safe(() => new Intl.NumberFormat(locale, {
+            style: "unit",
+            unit: hours < 48 ? "hour" : "day",
+            unitDisplay: "short",
+        }).format(hours < 48 ? hours : hours / 24), hours < 48 ? `${hours} h` : `${hours / 24} d`),
+    };
+}
+
+/**
+ * Styles for the history view, chart, timeline and dialog. A card maps its own
+ * tokens onto the `--history-*` variables (on its host or card); without them
+ * the view follows the Home Assistant theme.
+ *
+ * Palette: `.series-0` … `.series-4` set `--series` from `--history-series-N`.
+ * Timeline bands take `--band`, which a card sets per tone class (`.b-<tone>`)
+ * or per band (Home Assistant state colors).
+ */
+const historyStyles = i$4 `
+  :host {
+    --history-text-color: var(
+      --history-text,
+      var(--primary-text-color, #1b1b1a)
+    );
+    --history-muted-color: var(
+      --history-muted,
+      var(--secondary-text-color, #5b5a55)
+    );
+    --history-surface-color: var(
+      --history-surface,
+      var(--ha-card-background, var(--card-background-color, #fff))
+    );
+    --history-pill-color: var(
+      --history-pill,
+      var(--secondary-background-color, #f1f2f3)
+    );
+    --history-accent-color: var(
+      --history-accent,
+      var(--primary-color, #03a9f4)
+    );
+    --history-error-color: var(--history-error, var(--error-color, #c62828));
+  }
+  .series-0 {
+    --series: var(--history-series-0, var(--primary-color, #03a9f4));
+  }
+  .series-1 {
+    --series: var(--history-series-1, var(--orange-color, #ff9800));
+  }
+  .series-2 {
+    --series: var(--history-series-2, var(--green-color, #4caf50));
+  }
+  .series-3 {
+    --series: var(--history-series-3, var(--purple-color, #9c27b0));
+  }
+  .series-4 {
+    --series: var(--history-series-4, var(--red-color, #f44336));
+  }
+  .history-ranges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .history-range {
+    min-height: 44px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 22px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--history-text-color);
+    background: color-mix(in srgb, var(--history-text-color) 7%, transparent);
+    cursor: pointer;
+  }
+  .history-range[aria-pressed="true"] {
+    color: color-mix(
+      in srgb,
+      var(--history-accent-color) 65%,
+      var(--history-text-color)
+    );
+    background: color-mix(
+      in srgb,
+      var(--history-accent-color) 24%,
+      transparent
+    );
+    box-shadow: inset 0 0 0 1.5px
+      color-mix(in srgb, var(--history-accent-color) 60%, transparent);
+  }
+  .history-range:focus-visible,
+  .history-item:focus-visible,
+  .history-action:focus-visible,
+  .history-inspector input:focus-visible,
+  .history-close:focus-visible {
+    outline: 2px solid var(--history-accent-color);
+    outline-offset: 2px;
+  }
+  .history-inspector {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    color: var(--history-muted-color);
+    font-size: 12px;
+  }
+  .history-inspector input {
+    flex: 1;
+    width: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    min-width: 120px;
+    min-height: 44px;
+    accent-color: var(--history-accent-color);
+  }
+  .timeline .band-label {
+    fill: var(--history-text-color);
+    font-size: 11px;
+    pointer-events: none;
+  }
+  .history-plot {
+    min-height: 120px;
+    touch-action: pan-y;
+  }
+  .history-chart,
+  .timeline {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .history-chart .grid,
+  .timeline .grid {
+    stroke: color-mix(in srgb, var(--history-muted-color) 22%, transparent);
+  }
+  .history-chart .axis,
+  .timeline .axis,
+  .timeline .lane-label {
+    fill: var(--history-muted-color);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .timeline .lane-label {
+    font-weight: 600;
+  }
+  .history-chart .line {
+    fill: none;
+    stroke: var(--series);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .history-chart .dashed {
+    stroke-dasharray: 5 4;
+  }
+  .history-chart .area {
+    stroke: none;
+  }
+  .history-chart .area.series-0 {
+    fill: url(#history-fill-0);
+  }
+  .history-chart .area.series-1 {
+    fill: url(#history-fill-1);
+  }
+  .history-chart .area.series-2 {
+    fill: url(#history-fill-2);
+  }
+  .history-chart .area.series-3 {
+    fill: url(#history-fill-3);
+  }
+  .history-chart .area.series-4 {
+    fill: url(#history-fill-4);
+  }
+  .history-chart .fill-top {
+    stop-color: var(--series);
+    stop-opacity: var(--history-fill-opacity, 0.32);
+  }
+  .history-chart .fill-bottom {
+    stop-color: var(--series);
+    stop-opacity: 0;
+  }
+  .history-chart .lane-track {
+    fill: color-mix(in srgb, var(--series) 16%, transparent);
+  }
+  .history-chart .lane-on {
+    fill: var(--series);
+  }
+  .history-chart .cursor,
+  .timeline .cursor {
+    stroke: var(--history-muted-color);
+    stroke-dasharray: 3 3;
+  }
+  .timeline .track {
+    fill: color-mix(in srgb, var(--history-muted-color) 10%, transparent);
+  }
+  .timeline .band {
+    fill: var(--band, var(--history-muted-color));
+  }
+  .timeline .band.b-gap {
+    fill: url(#history-hatch);
+  }
+  .timeline .hatch-bg {
+    fill: color-mix(in srgb, var(--history-muted-color) 12%, transparent);
+  }
+  .timeline .hatch {
+    stroke: color-mix(in srgb, var(--history-muted-color) 45%, transparent);
+    stroke-width: 2;
+  }
+  .history-note {
+    margin: 40px 0;
+    text-align: center;
+    font-size: 14px;
+    color: var(--history-muted-color);
+  }
+  .history-note.failed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px 14px;
+    margin: 24px 0;
+    padding: 12px 14px;
+    border-radius: var(--history-tile, 16px);
+    color: var(--history-text-color);
+    background: color-mix(
+      in srgb,
+      var(--history-error-color) 16%,
+      var(--history-pill-color)
+    );
+  }
+  .history-when {
+    margin: -6px 8px 0;
+    font-size: 12.5px;
+    color: var(--history-muted-color);
+    font-variant-numeric: tabular-nums;
+  }
+  .history-legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+    gap: 6px;
+  }
+  .history-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 2px 10px;
+    min-height: 44px;
+    padding: 8px 14px;
+    border: 0;
+    border-radius: var(--history-tile, 16px);
+    font: inherit;
+    text-align: left;
+    color: var(--history-text-color);
+    background: var(--history-pill-color);
+    cursor: pointer;
+  }
+  .history-item .swatch {
+    grid-row: span 2;
+    width: 16px;
+    height: 0;
+    border-top: 3px solid var(--series);
+  }
+  .history-item.kind-step .swatch {
+    border-top-style: dashed;
+  }
+  .history-item.kind-lane .swatch {
+    height: 10px;
+    border-top: 0;
+    border-radius: 2px;
+    background: var(--series);
+  }
+  .history-item .label {
+    font-size: 0.78rem;
+    color: var(--history-muted-color);
+    overflow-wrap: anywhere;
+  }
+  .history-item strong {
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  dialog.history-dialog {
+    color: var(--history-text-color);
+    background: var(--history-surface-color);
+    border: 0;
+    border-radius: var(--history-radius, 24px);
+    padding: 16px;
+    width: min(640px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 32px);
+    overflow: auto;
+    box-shadow: 0 16px 60px #0006;
+  }
+  dialog.history-dialog[open] {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  dialog.history-dialog::backdrop {
+    background: #0008;
+  }
+  .history-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 8px;
+  }
+  .history-title {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--history-muted-color);
+    overflow-wrap: anywhere;
+  }
+  .history-subtitle {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .history-action,
+  .history-close {
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 50%;
+    color: var(--history-muted-color);
+    background: var(--history-pill-color);
+    cursor: pointer;
+  }
+  .history-action svg,
+  .history-close svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+  @media (max-width: 400px) {
+    dialog.history-dialog {
+      padding: 12px;
+    }
+  }
+`;
 
 /**
  * @license
@@ -246,52 +1107,16 @@ const paths = {
 // prettier-ignore
 const icon = (name, extra = "") => b `<svg class="i ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 
-const RANGES = [6, 24, 168];
 const SILENT$1 = new Set(["unavailable", "unknown", ""]);
-/** Sends a websocket message through whichever API this Home Assistant offers. */
-function send(hass, message) {
-    if (hass.callWS)
-        return hass.callWS(message);
-    if (hass.connection?.sendMessagePromise)
-        return hass.connection.sendMessagePromise(message);
-    return Promise.reject(new Error("Home Assistant history API unavailable"));
-}
-/**
- * Each lane's states over the last `hours` from Home Assistant's recorder,
- * ending with the current state at `now`.
- */
 async function loadHistory(hass, sources, hours, now = Date.now()) {
-    const start = now - hours * 3600000;
-    const reply = sources.length
-        ? await send(hass, {
-            type: "history/history_during_period",
-            start_time: new Date(start).toISOString(),
-            entity_ids: [...new Set(sources.map((s) => s.entityId))],
-            minimal_response: true,
-            no_attributes: true,
-            significant_changes_only: false,
-        })
-        : {};
-    return sources.map(({ kind, entityId }) => {
-        const marks = (reply?.[entityId] ?? []).map((row) => [
-            Math.max(start, (row.lu ?? row.lc ?? 0) * 1000),
-            row.s,
-        ]);
-        const current = hass.states[entityId];
-        if (current)
-            marks.push([now, current.state]);
-        return { kind, entityId, marks };
-    });
-}
-/** The state in force at `time`: the last mark at or before it; undefined before any. */
-function stateAt(lane, time) {
-    let state;
-    for (const [t, s] of lane.marks) {
-        if (t > time)
-            break;
-        state = s;
-    }
-    return state;
+    const lanes = await loadLanes(historyConnection(hass), sources, hass.states, hours, { now });
+    return lanes.map((lane) => ({
+        ...lane,
+        marks: lane.marks.map(([time, state]) => [
+            time,
+            state ?? "unavailable",
+        ]),
+    }));
 }
 /** The card's severity tones, applied to one lane's state. */
 function band(kind, state) {
@@ -979,77 +1804,25 @@ const styles = i$4 `
   .b-unknown {
     --band: var(--ac-unknown);
   }
-  dialog#history {
-    color: var(--ac-text);
-    background: var(--ac-surface);
-    border: 0;
-    border-radius: var(--ha-card-border-radius, 20px);
-    padding: 16px 16px 20px;
-    width: min(640px, calc(100vw - 24px));
-    max-height: 90dvh;
-    overflow: auto;
-    box-shadow: 0 16px 60px #0006;
+  :host {
+    --history-text: var(--ac-text);
+    --history-muted: var(--ac-muted);
+    --history-surface: var(
+      --ha-card-background,
+      var(--card-background-color, #fff)
+    );
+    --history-pill: var(--secondary-background-color, #f3f2ee);
   }
-  dialog#history.bubble {
-    background: var(
+  ha-card.bubble dialog#history {
+    --history-surface-color: var(
       --bubble-main-background-color,
       var(--ha-card-background, var(--card-background-color, #fff))
     );
-    border-radius: min(var(--bubble-border-radius, 32px), 28px);
-  }
-  dialog#history::backdrop {
-    background: #0007;
-  }
-  .history-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .history-head h2 {
-    flex: 1;
-    margin: 0 4px;
-    font-size: 20px;
-    font-weight: 800;
-    overflow-wrap: anywhere;
-  }
-  dialog#history button {
-    font: inherit;
-    color: inherit;
-    border: 0;
-    cursor: pointer;
-  }
-  dialog#history .close {
-    flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    font-size: 24px;
-    line-height: 1;
-    background: var(--ac-pill);
-  }
-  .ranges {
-    display: flex;
-    gap: 6px;
-    margin: 10px 0 8px;
-  }
-  dialog#history .ranges button {
-    min-height: 44px;
-    min-width: 56px;
-    padding: 0 14px;
-    border-radius: 22px;
-    background: var(--ac-pill);
-    font-size: 14px;
-    font-weight: 700;
-  }
-  dialog#history .ranges button[aria-pressed="true"] {
-    background: color-mix(in srgb, var(--ac-ok) 24%, var(--ac-pill));
-  }
-  .history-plot {
-    min-height: 72px;
-    touch-action: pan-y;
-  }
-  .history-plot .note {
-    margin: 24px 0;
+    --history-pill-color: var(
+      --bubble-secondary-background-color,
+      var(--secondary-background-color, #f3f2ee)
+    );
+    --history-radius: min(var(--bubble-border-radius, 32px), 28px);
   }
   .timeline {
     display: block;
@@ -1076,7 +1849,7 @@ const styles = i$4 `
     fill: color-mix(in srgb, var(--band) 78%, var(--ac-surface));
   }
   .timeline .band.b-gap {
-    fill: url(#ac-hatch);
+    fill: url(#history-hatch);
   }
   .timeline .hatch-bg {
     fill: color-mix(in srgb, var(--ac-unknown) 14%, var(--ac-surface));
@@ -1095,7 +1868,7 @@ const styles = i$4 `
     text-align: center;
     color: var(--ac-muted);
   }
-  .when {
+  .history-when {
     margin: 4px 4px 6px;
     font-size: 13px;
     color: var(--ac-muted);
@@ -1107,6 +1880,10 @@ const styles = i$4 `
     gap: 6px;
   }
   dialog#history .lane-item {
+    border: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
     display: grid;
     grid-template-columns: auto 1fr;
     align-items: center;
@@ -1176,80 +1953,6 @@ const styles = i$4 `
   }
   ${colorSchemeStyles}
 `;
-
-/** Room left and right of the bands, so edge time labels are not clipped. */
-const SIDE = 22, TOP = 4, LABEL = 18, BAND = 24, GAP = 12, AXIS = 24;
-/** The hours between x-axis ticks for a window, fewer on a narrow chart. */
-function every(hours, narrow) {
-    if (hours <= 6)
-        return narrow ? 2 : 1;
-    if (hours <= 24)
-        return narrow ? 6 : 4;
-    return narrow ? 48 : 24;
-}
-/**
- * One lane per entity with a colored band per state, from `start` to `end`.
- * A silent (unavailable) spell is hatched; time before any record is empty.
- */
-function timeline(lanes, start, end, hover, text, W = 600) {
-    const RIGHT = W - SIDE;
-    const H = TOP + lanes.length * (LABEL + BAND) + (lanes.length - 1) * GAP + AXIS;
-    const bottom = H - AXIS;
-    const x = (t) => SIDE +
-        ((Math.min(Math.max(t, start), end) - start) / (end - start)) *
-            (RIGHT - SIDE);
-    const step = every((end - start) / 3600000, W < 480);
-    const ticks = [];
-    const hour = new Date(start);
-    hour.setMinutes(0, 0, 0);
-    let midnights = 0;
-    for (let t = hour.getTime(); t <= end; t += 3600000) {
-        if (t < start)
-            continue;
-        const h = new Date(t).getHours();
-        if (step >= 24 ? h === 0 && midnights++ % (step / 24) === 0 : h % step === 0)
-            ticks.push(t);
-    }
-    const top = (i) => TOP + i * (LABEL + BAND + GAP);
-    return w `<svg class="timeline" viewBox="0 0 ${W} ${H}" role="img" aria-label=${text.label}>
-    <title>${text.label}</title>
-    <defs>
-      <pattern id="ac-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-        <rect class="hatch-bg" width="6" height="6"></rect>
-        <line class="hatch" x1="0" y1="0" x2="0" y2="6"></line>
-      </pattern>
-    </defs>
-    ${ticks.map((t) => w `<line class="grid" x1=${x(t)} x2=${x(t)} y1=${TOP} y2=${bottom}></line>
-        <text class="axis" x=${x(t)} y=${bottom + 17} text-anchor="middle">${text.time(t, step >= 24)}</text>`)}
-    ${lanes.map((lane, i) => {
-        const y = top(i) + LABEL;
-        return w `<g class="lane" data-lane=${lane.kind}>
-        <text class="lane-label" x=${SIDE} y=${top(i) + 13}>${text.lane(lane)}</text>
-        <rect class="track" x=${SIDE} y=${y} width=${RIGHT - SIDE} height=${BAND} rx="4"></rect>
-        ${lane.marks.map(([t, state], j) => {
-            const next = lane.marks[j + 1]?.[0] ?? end;
-            const from = x(t), to = x(next);
-            if (to - from <= 0)
-                return A;
-            const tone = band(lane.kind, state);
-            const color = tone === "gap" ? undefined : text.color?.(lane, state);
-            return w `<rect class=${`band b-${tone}`} data-state=${state} style=${color ? `--band: ${color}` : ""} x=${from} y=${y} width=${to - from} height=${BAND}></rect>`;
-        })}
-      </g>`;
-    })}
-    ${hover === undefined
-        ? A
-        : w `<line class="cursor" x1=${x(hover)} x2=${x(hover)} y1=${TOP} y2=${bottom}></line>`}
-  </svg>`;
-}
-/** The time under a pointer over the timeline. */
-function timeAt(event, element, start, end) {
-    const box = element.getBoundingClientRect();
-    const W = element.viewBox?.baseVal?.width || box.width;
-    const px = ((event.clientX - box.left) / box.width) * W;
-    const ratio = (px - SIDE) / (W - 2 * SIDE);
-    return start + Math.min(1, Math.max(0, ratio)) * (end - start);
-}
 
 /** Card-only choices: which doors and gates, the access event, title, look and confirmations. */
 class AccessControlCardEditor extends i$1 {
@@ -1474,11 +2177,7 @@ class AccessControlCard extends i$1 {
         /** Entity IDs with a request in flight; "*" is Lock all. */
         this.pending = new Set();
         this.failures = new Map();
-        this.range = 24;
-        this.historyLoading = false;
-        this.historyError = "";
-        this.historyTicket = 0;
-        this.plotWidth = 600;
+        this.history = new HistoryController(this, (range, end) => loadHistory(this.ha, this.sources(this.historyItem), range, end));
     }
     static getConfigElement() {
         return document.createElement("access-control-card-editor");
@@ -1501,23 +2200,9 @@ class AccessControlCard extends i$1 {
     }
     disconnectedCallback() {
         super.disconnectedCallback();
-        this.resize?.disconnect();
-        this.resize = undefined;
     }
     updated() {
-        const plot = this.shadowRoot?.querySelector(".history-plot");
-        if (!plot || this.resize)
-            return;
-        this.resize = new ResizeObserver(([entry]) => {
-            const width = Math.round(entry.contentRect.width);
-            // Redraw next frame, outside the observer's own layout pass.
-            if (width > 0 && Math.abs(width - this.plotWidth) > 4)
-                requestAnimationFrame(() => {
-                    this.plotWidth = width;
-                    this.requestUpdate();
-                });
-        });
-        this.resize.observe(plot);
+        this.history.observe(this.shadowRoot?.querySelector(".history-plot"));
     }
     set hass(value) {
         this.ha = value;
@@ -1750,7 +2435,7 @@ class AccessControlCard extends i$1 {
             data-history
             aria-label=${`${status}. ${this.t("historyOf", { name: item.name })}`}
             title=${this.t("history")}
-            @click=${() => void this.openHistory(item)}
+            @click=${(event) => void this.openHistory(item, event)}
           >
             <strong>${label}</strong>${rest}${icon("history", "h")}
           </button>
@@ -1773,53 +2458,13 @@ class AccessControlCard extends i$1 {
                 : []),
         ];
     }
-    async openHistory(item) {
+    async openHistory(item, event) {
         this.historyItem = item;
-        this.lanes = this.window = undefined;
-        this.requestUpdate();
-        await this.updateComplete;
-        const dialog = this.shadowRoot?.querySelector("#history");
-        if (dialog && !dialog.open)
-            dialog.showModal();
-        void this.loadHistory();
+        await openHistoryDialog(this.history, this.shadowRoot, this, this.t("historyFailed"), event.currentTarget);
     }
     closeHistory() {
-        this.historyTicket++;
-        this.lanes = this.window = this.hover = undefined;
-        this.historyLoading = false;
-        this.historyError = "";
+        this.history.reset();
         this.shadowRoot?.querySelector("#history")?.close();
-    }
-    async loadHistory(range = this.range) {
-        const item = this.historyItem;
-        if (!this.ha || !item)
-            return;
-        const ticket = ++this.historyTicket;
-        this.range = range;
-        this.historyLoading = true;
-        this.historyError = "";
-        this.hover = undefined;
-        this.requestUpdate();
-        const end = Date.now();
-        try {
-            const lanes = await loadHistory(this.ha, this.sources(item), range, end);
-            if (ticket !== this.historyTicket)
-                return;
-            this.lanes = lanes;
-            this.window = [end - range * 3600000, end];
-        }
-        catch (error) {
-            if (ticket !== this.historyTicket)
-                return;
-            this.lanes = this.window = undefined;
-            this.historyError = `${this.t("historyFailed")}: ${error instanceof Error
-                ? error.message
-                : typeof error === "object" && error && "message" in error
-                    ? String(error.message)
-                    : String(error)}`;
-        }
-        this.historyLoading = false;
-        this.requestUpdate();
     }
     laneLabel(item, kind) {
         if (kind === "lock")
@@ -1830,30 +2475,10 @@ class AccessControlCard extends i$1 {
     }
     historyDialog() {
         const item = this.historyItem;
-        const locale = formatLocale(this.ha);
-        const hour12 = this.ha?.locale?.time_format === "12"
-            ? true
-            : this.ha?.locale?.time_format === "24"
-                ? false
-                : undefined;
-        const time = (ms, withDay) => new Intl.DateTimeFormat(locale, withDay
-            ? { weekday: "short", day: "numeric" }
-            : { hour: "2-digit", minute: "2-digit", hour12 }).format(ms);
-        const detailed = (ms) => new Intl.DateTimeFormat(locale, {
-            weekday: "short",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12,
-        }).format(ms);
-        const span = (hours) => new Intl.NumberFormat(locale, {
-            style: "unit",
-            unit: hours < 48 ? "hour" : "day",
-            unitDisplay: "short",
-        }).format(hours < 48 ? hours : hours / 24);
-        const lanes = this.lanes;
-        const window = this.window;
-        const at = this.hover;
-        const title = item ? this.t("historyTitle", { name: item.name }) : "";
+        const title = item
+            ? this.t("historyTitle", { name: item.name })
+            : this.t("history");
+        const format = historyFormat(this.ha);
         const keys = item?.kind === "gate"
             ? ["ok", "opening", "open", "closing", "gap"]
             : ["ok", "attention", "open", "problem", "gap"];
@@ -1873,105 +2498,68 @@ class AccessControlCard extends i$1 {
             }[key];
             return state ? this.bandColor(item.entity, state, key) : undefined;
         };
-        return b `<dialog
-      id="history"
-      class=${this.config?.appearance === "bubble" ? "bubble" : ""}
-      aria-labelledby="history-title"
-      @close=${() => {
-            this.historyTicket++;
-            this.hover = undefined;
-        }}
-    >
-      <div class="history-head">
-        <h2 id="history-title">${title}</h2>
-        <button
-          class="close"
-          data-close
-          aria-label=${this.t("closeDialog")}
-          title=${this.t("closeDialog")}
-          @click=${() => this.closeHistory()}
-        >
-          ×
-        </button>
-      </div>
-      <div class="ranges" role="group" aria-label=${this.t("history")}>
-        ${RANGES.map((hours) => b `<button
-              data-range=${hours}
-              aria-pressed=${String(this.range === hours)}
-              @click=${() => void this.loadHistory(hours)}
-            >
-              ${span(hours)}
-            </button>`)}
-      </div>
-      <div
-        class="history-plot"
-        aria-busy=${String(this.historyLoading)}
-        @pointermove=${(e) => {
-            const svg = e.currentTarget.querySelector("svg");
-            if (!svg || !window)
-                return;
-            this.hover = timeAt(e, svg, window[0], window[1]);
-            this.requestUpdate();
-        }}
-        @pointerleave=${() => {
-            this.hover = undefined;
-            this.requestUpdate();
-        }}
-      >
-        ${this.historyError
-            ? b `<p class="note sev-problem" role="alert">
-                ${icon("warning", "s")}${this.historyError}
-              </p>`
-            : !lanes || !window || !item
-                ? b `<p class="hint" role="status">${this.t("loading")}</p>`
-                : lanes.every((l) => !l.marks.length)
-                    ? b `<p class="hint">${this.t("noHistory")}</p>`
-                    : timeline(lanes, window[0], window[1], at, {
-                        time,
-                        lane: (lane) => this.laneLabel(item, lane.kind),
-                        label: title,
-                        color: (lane, state) => this.bandColor(lane.entityId, state, band(lane.kind, state)),
-                    }, Math.max(280, this.plotWidth))}
-      </div>
-      <p class="when" aria-live="polite">
-        ${at === undefined ? this.t("now") : detailed(at)}
-      </p>
-      <div class="lanes">
-        ${(item && lanes ? lanes : []).map((lane) => {
-            const state = at === undefined
-                ? lane.marks[lane.marks.length - 1]?.[1]
-                : stateAt(lane, at);
-            const tone = state === undefined ? "none" : band(lane.kind, state);
-            const color = state === undefined || tone === "gap"
-                ? undefined
-                : this.bandColor(lane.entityId, state, tone);
-            return b `<button
+        return historyDialog(this.history, {
+            strings: {
+                ...historyStrings(this.ha),
+                history: title,
+                loading: this.t("loading"),
+                empty: this.t("noHistory"),
+                closeHistory: this.t("closeDialog"),
+            },
+            format,
+            chart: (lanes, window, at, width) => timeline(lanes, window[0], window[1], at, {
+                time: format.time,
+                lane: (lane) => this.laneLabel(item, lane.kind),
+                label: title,
+                tone: (lane, state) => band(lane.kind, state),
+                color: (lane, state) => this.bandColor(lane.entityId, state, band(lane.kind, state)),
+            }, width),
+            isEmpty: (lanes) => lanes.every((lane) => !lane.marks.some(([, state]) => state !== undefined)),
+            timeAt: (event, svg, window) => timelineTimeAt(event, svg, window[0], window[1]),
+            legend: () => [],
+            select: (entityId) => this.moreInfo(entityId),
+            renderLegend: (lanes, at) => b `
+        ${(item ? lanes : []).map((lane) => {
+                const state = at === undefined
+                    ? lane.marks[lane.marks.length - 1]?.[1]
+                    : stateAt(lane, at);
+                const tone = state === undefined ? "none" : band(lane.kind, state);
+                const color = state === undefined || tone === "gap"
+                    ? undefined
+                    : this.bandColor(lane.entityId, state, tone);
+                return b `<button
             class="lane-item"
             data-lane=${lane.kind}
             @click=${() => {
-                this.closeHistory();
-                this.moreInfo(lane.entityId);
-            }}
+                    this.closeHistory();
+                    this.moreInfo(lane.entityId);
+                }}
           >
             <span
               class=${`swatch b-${tone}`}
               style=${color ? `--band: ${color}` : ""}
             ></span>
-            <span class="lane-name">${this.laneLabel(item, lane.kind)}</span>
+            <span class="lane-name"
+              >${this.laneLabel(item, lane.kind)}</span
+            >
             <strong>${this.laneState(lane.kind, state)}</strong>
           </button>`;
-        })}
-      </div>
-      <ul class="key">
-        ${keys.map((key) => b `<li>
-              <span
-                class=${`swatch b-${key}`}
-                style=${keyColor(key) ? `--band: ${keyColor(key)}` : ""}
-              ></span
-              >${this.t(key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key])}
-            </li>`)}
-      </ul>
-    </dialog>`;
+            })}
+      `,
+            footer: b `
+        <ul class="key">
+          ${keys.map((key) => b `<li>
+                <span
+                  class=${`swatch b-${key}`}
+                  style=${keyColor(key) ? `--band: ${keyColor(key)}` : ""}
+                ></span
+                >${this.t(key === "ok" && item?.kind === "gate"
+                ? "keyClosed"
+                : KEY[key])}
+              </li>`)}
+        </ul>
+      `,
+        });
     }
     renderConfirm(item) {
         const unlock = this.confirming.action === "unlock";
@@ -2074,7 +2662,7 @@ class AccessControlCard extends i$1 {
     </ha-card>`;
     }
 }
-AccessControlCard.styles = styles;
+AccessControlCard.styles = [historyStyles, styles];
 customElements.define("access-control-card", AccessControlCard);
 // Card-picker metadata has no hass context, so it stays English.
 const registry = window;
