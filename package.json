@@ -1,6 +1,6 @@
 {
   "name": "lovelace-access-control",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Lovelace card for the doors and gates of the house",
   "type": "module",
   "scripts": {

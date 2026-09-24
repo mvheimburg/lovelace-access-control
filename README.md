@@ -173,3 +173,31 @@ their current appearance. Scheme names and the editor label support English and
 Norwegian Bokmål; YAML values remain unchanged in either language. Static
 card-picker metadata remains English because it has no Home Assistant language
 context.
+
+## Home Assistant state colors
+
+By default the card colors doors and gates by what needs attention: green when
+locked or closed, amber when unlocked, orange when open, red when jammed. Turn
+on **Use Home Assistant's state colors** in the card editor (0.6.0) to use
+Home Assistant's own lock, cover and door colors instead, so your theme decides:
+
+```yaml
+state_colors: true
+```
+
+The card then colors each door, gate, the summary and the history timeline the
+way Home Assistant's own cards do. It uses the most specific theme variable that
+is set, for example for a locked lock `--state-lock-locked-color`, then
+`--state-lock-inactive-color`, then `--state-inactive-color`, and finally the
+card's own color. An open door uses its contact's color
+(`--state-binary_sensor-door-on-color`), and a gate its device class first
+(`--state-cover-gate-closed-color`). With Home Assistant's default theme, a
+locked door is green, an unlocked one red and a closed gate grey.
+
+To change a color, set the variable in your theme, for example a calm grey for
+locked doors:
+
+```yaml
+my_theme:
+  state-lock-locked-color: "var(--grey-color)"
+```

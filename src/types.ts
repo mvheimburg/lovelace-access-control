@@ -57,6 +57,8 @@ export interface CardConfig {
   access_event?: string;
   confirm_unlock: boolean;
   confirm_gate: boolean;
+  /** Color doors and gates with Home Assistant's state colors (theme), not the card's. */
+  state_colors?: boolean;
 }
 
 export type Tone = "ok" | "attention" | "open" | "problem" | "unknown";

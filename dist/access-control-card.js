@@ -211,6 +211,9 @@ function validateConfig(input) {
     for (const key of ["confirm_unlock", "confirm_gate"])
         if (typeof config[key] !== "boolean")
             throw new Error(`${key} must be boolean`);
+    if (config.state_colors !== undefined &&
+        typeof config.state_colors !== "boolean")
+        throw new Error("state_colors must be boolean");
     if (config.title !== undefined && typeof config.title !== "string")
         throw new Error("title must be text");
     if (config.access_event !== undefined &&
@@ -244,7 +247,7 @@ const paths = {
 const icon = (name, extra = "") => b `<svg class="i ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 
 const RANGES = [6, 24, 168];
-const SILENT = new Set(["unavailable", "unknown", ""]);
+const SILENT$1 = new Set(["unavailable", "unknown", ""]);
 /** Sends a websocket message through whichever API this Home Assistant offers. */
 function send(hass, message) {
     if (hass.callWS)
@@ -292,7 +295,7 @@ function stateAt(lane, time) {
 }
 /** The card's severity tones, applied to one lane's state. */
 function band(kind, state) {
-    if (SILENT.has(state))
+    if (SILENT$1.has(state))
         return "gap";
     if (kind === "contact")
         return state === "on" ? "open" : state === "off" ? "ok" : "unknown";
@@ -421,6 +424,7 @@ const en = {
     accessEvent: "Access event (panel)",
     confirmUnlockLabel: "Confirm before unlocking",
     confirmGateLabel: "Confirm before opening a gate",
+    stateColorsLabel: "Use Home Assistant's state colors (follows your theme)",
 };
 const nb = {
     title: "Dører og porter",
@@ -506,6 +510,7 @@ const nb = {
     accessEvent: "Tilgangshendelse (panel)",
     confirmUnlockLabel: "Bekreft før opplåsing",
     confirmGateLabel: "Bekreft før en port åpnes",
+    stateColorsLabel: "Bruk Home Assistants tilstandsfarger (følger temaet)",
 };
 function localize(hass, key, values = {}) {
     return { en, nb }[dictionary(hass)][key].replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
@@ -596,6 +601,43 @@ function candidates(hass, domain) {
         (domain === "lock" ||
             ["gate", "garage"].includes(String(hass.states[id].attributes.device_class ?? ""))))
         .sort();
+}
+
+const SILENT = new Set(["unavailable", "unknown", ""]);
+/** Home Assistant's notion of an active state, which picks its active/inactive color. */
+function active(domain, state) {
+    if (domain === "lock")
+        return state !== "locked";
+    if (domain === "cover")
+        return state !== "closed";
+    return state === "on";
+}
+/**
+ * A state's color the way Home Assistant resolves it, as a CSS value: the most
+ * specific theme variable that is set wins, e.g. for a locked lock
+ * `--state-lock-locked-color`, then `--state-lock-inactive-color`, then
+ * `--state-inactive-color`, and finally the card's own color. A theme that sets
+ * any of these recolors the card.
+ */
+function stateColor(hass, entityId, state, fallback) {
+    if (SILENT.has(state))
+        return `var(--state-unavailable-color, ${fallback})`;
+    const domain = entityId.split(".")[0];
+    const deviceClass = hass.states[entityId]?.attributes.device_class;
+    const mode = active(domain, state) ? "active" : "inactive";
+    const names = [
+        ...(typeof deviceClass === "string" && deviceClass
+            ? [`--state-${domain}-${deviceClass}-${state}-color`]
+            : []),
+        `--state-${domain}-${state}-color`,
+        // Home Assistant colors a lock on its way somewhere as pending.
+        ...(domain === "lock" && ["locking", "unlocking", "opening"].includes(state)
+            ? ["--state-lock-pending-color"]
+            : []),
+        `--state-${domain}-${mode}-color`,
+        `--state-${mode}-color`,
+    ];
+    return names.reduceRight((inner, name) => `var(${name}, ${inner})`, fallback);
 }
 
 const styles = i$4 `
@@ -1190,7 +1232,8 @@ function timeline(lanes, start, end, hover, text, W = 600) {
             if (to - from <= 0)
                 return A;
             const tone = band(lane.kind, state);
-            return w `<rect class=${`band b-${tone}`} data-state=${state} x=${from} y=${y} width=${to - from} height=${BAND}></rect>`;
+            const color = tone === "gap" ? undefined : text.color?.(lane, state);
+            return w `<rect class=${`band b-${tone}`} data-state=${state} style=${color ? `--band: ${color}` : ""} x=${from} y=${y} width=${to - from} height=${BAND}></rect>`;
         })}
       </g>`;
     })}
@@ -1316,6 +1359,7 @@ class AccessControlCardEditor extends i$1 {
       </label>
       ${check("confirm_unlock", "confirmUnlockLabel")}
       ${check("confirm_gate", "confirmGateLabel")}
+      ${check("state_colors", "stateColorsLabel")}
       <label class="field">
         ${this.t("appearance")}
         <select
@@ -1561,6 +1605,25 @@ class AccessControlCard extends i$1 {
             : (kind === "lock" ? DOOR_STATE : GATE_STATE)[state];
         return key ? this.t(key) : state;
     }
+    /**
+     * An item's color from Home Assistant's state colors, when the card is set to
+     * follow them: the lock or gate's state, or the contact's while a door is open.
+     * Without that setting the card's own tone colors apply.
+     */
+    color(item) {
+        if (!this.config?.state_colors || !this.ha)
+            return undefined;
+        const fallback = `var(--ac-${item.tone})`;
+        if (item.available && item.opened && item.contact)
+            return stateColor(this.ha, item.contact, "on", fallback);
+        return stateColor(this.ha, item.entity, item.state, fallback);
+    }
+    /** A timeline band or legend swatch in Home Assistant's state colors. */
+    bandColor(entityId, state, tone) {
+        if (!this.config?.state_colors || !this.ha)
+            return undefined;
+        return stateColor(this.ha, entityId, state, `var(--ac-${tone})`);
+    }
     headline(items) {
         const count = (tone) => items.filter((i) => i.tone === tone).length;
         const part = (n, one, many) => n === 0 ? [] : [n === 1 ? this.t(one) : this.t(many, { n })];
@@ -1661,7 +1724,12 @@ class AccessControlCard extends i$1 {
         const label = busy ? this.t("sending") : this.stateLabel(item);
         const rest = `${contact ? ` · ${contact}` : ""}${item.area ? ` · ${item.area}` : ""}`;
         const status = `${label}${rest}`;
-        return b `<div class="row sev-${item.tone}" data-entity=${item.entity}>
+        const color = this.color(item);
+        return b `<div
+        class="row sev-${item.tone}"
+        data-entity=${item.entity}
+        style=${color ? `--sev: ${color}` : ""}
+      >
         <div class="who">
           <button class="info" @click=${() => this.moreInfo(item.entity)}>
             <span class="circ"
@@ -1789,6 +1857,22 @@ class AccessControlCard extends i$1 {
         const keys = item?.kind === "gate"
             ? ["ok", "opening", "open", "closing", "gap"]
             : ["ok", "attention", "open", "problem", "gap"];
+        // With Home Assistant's colors, each key shows a state it stands for.
+        const keyColor = (key) => {
+            if (!item || key === "gap")
+                return undefined;
+            if (item.kind === "gate")
+                return this.bandColor(item.entity, key === "ok" ? "closed" : key, key);
+            if (key === "open" && item.contact)
+                return this.bandColor(item.contact, "on", key);
+            const state = {
+                ok: "locked",
+                attention: "unlocked",
+                open: "open",
+                problem: "jammed",
+            }[key];
+            return state ? this.bandColor(item.entity, state, key) : undefined;
+        };
         return b `<dialog
       id="history"
       class=${this.config?.appearance === "bubble" ? "bubble" : ""}
@@ -1846,6 +1930,7 @@ class AccessControlCard extends i$1 {
                         time,
                         lane: (lane) => this.laneLabel(item, lane.kind),
                         label: title,
+                        color: (lane, state) => this.bandColor(lane.entityId, state, band(lane.kind, state)),
                     }, Math.max(280, this.plotWidth))}
       </div>
       <p class="when" aria-live="polite">
@@ -1857,6 +1942,9 @@ class AccessControlCard extends i$1 {
                 ? lane.marks[lane.marks.length - 1]?.[1]
                 : stateAt(lane, at);
             const tone = state === undefined ? "none" : band(lane.kind, state);
+            const color = state === undefined || tone === "gap"
+                ? undefined
+                : this.bandColor(lane.entityId, state, tone);
             return b `<button
             class="lane-item"
             data-lane=${lane.kind}
@@ -1865,7 +1953,10 @@ class AccessControlCard extends i$1 {
                 this.moreInfo(lane.entityId);
             }}
           >
-            <span class=${`swatch b-${tone}`}></span>
+            <span
+              class=${`swatch b-${tone}`}
+              style=${color ? `--band: ${color}` : ""}
+            ></span>
             <span class="lane-name">${this.laneLabel(item, lane.kind)}</span>
             <strong>${this.laneState(lane.kind, state)}</strong>
           </button>`;
@@ -1873,7 +1964,11 @@ class AccessControlCard extends i$1 {
       </div>
       <ul class="key">
         ${keys.map((key) => b `<li>
-              <span class=${`swatch b-${key}`}></span>${this.t(key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key])}
+              <span
+                class=${`swatch b-${key}`}
+                style=${keyColor(key) ? `--band: ${keyColor(key)}` : ""}
+              ></span
+              >${this.t(key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key])}
             </li>`)}
       </ul>
     </dialog>`;
@@ -1918,6 +2013,9 @@ class AccessControlCard extends i$1 {
         const gates = this.config.gates.map((g) => resolve(this.ha, g, "gate"));
         const all = [...doors, ...gates];
         const tone = all.length ? overall(all) : "unknown";
+        // The summary takes the color of the item that sets its tone.
+        const worst = all.find((i) => i.tone === tone);
+        const heroColor = worst ? this.color(worst) : undefined;
         const lockable = doors.filter((d) => d.available && !d.needsCode && d.state === "unlocked");
         const closable = gates.filter((g) => g.available && !["closed", "closing"].includes(g.state));
         const secureCount = lockable.length + closable.length;
@@ -1929,7 +2027,10 @@ class AccessControlCard extends i$1 {
         const lockAllFailure = this.failures.get("*");
         return b `<ha-card class=${this.config.appearance}>
       <div class="title">${this.config.title ?? this.t("title")}</div>
-      <div class="hero sev-${tone}">
+      <div
+        class="hero sev-${tone}"
+        style=${heroColor ? `--sev: ${heroColor}` : ""}
+      >
         <span class="circ big">${icon(HERO_ICON[tone])}</span>
         <div class="hero-text">
           <div class="headline">

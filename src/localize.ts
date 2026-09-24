@@ -110,6 +110,7 @@ const en = {
   accessEvent: "Access event (panel)",
   confirmUnlockLabel: "Confirm before unlocking",
   confirmGateLabel: "Confirm before opening a gate",
+  stateColorsLabel: "Use Home Assistant's state colors (follows your theme)",
 };
 
 const nb: typeof en = {
@@ -196,6 +197,7 @@ const nb: typeof en = {
   accessEvent: "Tilgangshendelse (panel)",
   confirmUnlockLabel: "Bekreft før opplåsing",
   confirmGateLabel: "Bekreft før en port åpnes",
+  stateColorsLabel: "Bruk Home Assistants tilstandsfarger (følger temaet)",
 };
 
 export type MessageKey = keyof typeof en;

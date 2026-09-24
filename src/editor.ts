@@ -182,6 +182,7 @@ export class AccessControlCardEditor extends LitElement {
       </label>
       ${check("confirm_unlock", "confirmUnlockLabel")}
       ${check("confirm_gate", "confirmGateLabel")}
+      ${check("state_colors", "stateColorsLabel")}
       <label class="field">
         ${this.t("appearance")}
         <select

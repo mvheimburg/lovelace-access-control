@@ -573,3 +573,100 @@ describe("history", () => {
     expect(root.querySelectorAll("[role=alert]")).toHaveLength(1);
   });
 });
+
+describe("Home Assistant state colors", () => {
+  const sev = (el: Element) =>
+    getComputedStyle(el).getPropertyValue("--sev").trim();
+  /** A theme that sets some of Home Assistant's state colors. */
+  const theme = (card: HTMLElement) =>
+    card.setAttribute(
+      "style",
+      [
+        "--state-lock-locked-color: rgb(1, 1, 1)",
+        "--state-lock-unlocked-color: rgb(2, 2, 2)",
+        "--state-binary_sensor-door-on-color: rgb(3, 3, 3)",
+        "--state-cover-closed-color: rgb(4, 4, 4)",
+        "--state-cover-gate-closed-color: rgb(5, 5, 5)",
+        "--state-inactive-color: rgb(6, 6, 6)",
+        "--state-unavailable-color: rgb(7, 7, 7)",
+      ].join(";"),
+    );
+
+  it("are off by default: the card's own colors apply", async () => {
+    const { card, root } = await mount(fixture());
+    theme(card);
+    await settle();
+    expect(row(root, "lock.front").getAttribute("style")).toBe("");
+    expect(sev(row(root, "lock.front"))).not.toBe("rgb(1, 1, 1)");
+  });
+
+  it("follow the theme's most specific state color, per lock, contact and gate", async () => {
+    const hass = fixture();
+    hass.states["lock.back"].state = "unlocked";
+    hass.states["lock.shed"].state = "unavailable";
+    const { card, root } = await mount(hass, { ...CONFIG, state_colors: true });
+    theme(card);
+    await settle();
+    expect(sev(row(root, "lock.front"))).toBe("rgb(1, 1, 1)");
+    expect(sev(row(root, "lock.back"))).toBe("rgb(2, 2, 2)");
+    expect(sev(row(root, "lock.shed"))).toBe("rgb(7, 7, 7)");
+    // A gate's device class color wins over the domain's.
+    expect(sev(row(root, "cover.gate"))).toBe("rgb(5, 5, 5)");
+    // An open door takes its contact's color.
+    hass.states["binary_sensor.front_contact"].state = "on";
+    card.hass = { ...hass };
+    await settle();
+    expect(sev(row(root, "lock.front"))).toBe("rgb(3, 3, 3)");
+    // The summary takes the color of what sets its tone: the silent lock.
+    expect(sev(root.querySelector(".hero")!)).toBe("rgb(7, 7, 7)");
+  });
+
+  it("fall back to Home Assistant's general colors, then the card's", async () => {
+    const hass = fixture();
+    const { card, root } = await mount(hass, { ...CONFIG, state_colors: true });
+    card.setAttribute("style", "--state-inactive-color: rgb(6, 6, 6)");
+    await settle();
+    expect(sev(row(root, "lock.front"))).toBe("rgb(6, 6, 6)");
+    card.removeAttribute("style");
+    await settle();
+    // Nothing set by a theme: the card's own "ok" color (--success-color here).
+    card.setAttribute("style", "--success-color: rgb(8, 8, 8)");
+    await settle();
+    expect(sev(row(root, "lock.front"))).toBe("rgb(8, 8, 8)");
+  });
+
+  it("color the history's bands, lanes and key", async () => {
+    const now = Date.now();
+    const hass = fixture();
+    const s = (ms: number) => ms / 1000;
+    hass.callWS = (async () => ({
+      "lock.front": [{ s: "locked", lu: s(now - 20 * 3_600_000) }],
+      "binary_sensor.front_contact": [
+        { s: "off", lu: s(now - 20 * 3_600_000) },
+      ],
+    })) as unknown as HomeAssistant["callWS"];
+    const { card, root } = await mount(hass, { ...CONFIG, state_colors: true });
+    theme(card);
+    row(root, "lock.front")
+      .querySelector<HTMLButtonElement>("[data-history]")!
+      .click();
+    await vi.waitFor(() =>
+      expect(root.querySelector(".timeline")).not.toBeNull(),
+    );
+    const band = (selector: string) =>
+      getComputedStyle(root.querySelector(selector)!)
+        .getPropertyValue("--band")
+        .trim();
+    expect(band('.band[data-state="locked"]')).toBe("rgb(1, 1, 1)");
+    expect(band('.lane-item[data-lane="lock"] .swatch')).toBe("rgb(1, 1, 1)");
+    expect(band(".key .b-attention")).toBe("rgb(2, 2, 2)");
+    expect(band(".key .b-open")).toBe("rgb(3, 3, 3)");
+  });
+
+  it("must be true or false", () => {
+    const card = new AccessControlCard();
+    expect(() => card.setConfig({ ...CONFIG, state_colors: "yes" })).toThrow(
+      "state_colors must be boolean",
+    );
+  });
+});

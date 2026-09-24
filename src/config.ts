@@ -33,6 +33,11 @@ export function validateConfig(input: Record<string, unknown>): CardConfig {
   for (const key of ["confirm_unlock", "confirm_gate"])
     if (typeof config[key] !== "boolean")
       throw new Error(`${key} must be boolean`);
+  if (
+    config.state_colors !== undefined &&
+    typeof config.state_colors !== "boolean"
+  )
+    throw new Error("state_colors must be boolean");
   if (config.title !== undefined && typeof config.title !== "string")
     throw new Error("title must be text");
   if (

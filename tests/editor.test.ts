@@ -73,3 +73,19 @@ it("sets the access event, confirmations and appearance, in Bokmål", async () =
     appearance: "bubble",
   });
 });
+
+it("turns on Home Assistant's state colors, in Bokmål", async () => {
+  const hass = fixture();
+  hass.language = "nb";
+  const { root, configs } = await mount({}, hass);
+  expect(root.textContent).toContain(
+    "Bruk Home Assistants tilstandsfarger (følger temaet)",
+  );
+  const colors = root.querySelector<HTMLInputElement>(
+    '[data-field="state_colors"]',
+  )!;
+  expect(colors.checked).toBe(false);
+  colors.checked = true;
+  colors.dispatchEvent(new Event("change"));
+  expect(configs.at(-1)).toEqual({ state_colors: true });
+});

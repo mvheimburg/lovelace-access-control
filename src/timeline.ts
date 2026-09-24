@@ -13,6 +13,8 @@ export interface TimelineText {
   time: (ms: number, withDay: boolean) => string;
   lane: (lane: Lane) => string;
   label: string;
+  /** A band's color when it follows Home Assistant's state colors. */
+  color?: (lane: Lane, state: string) => string | undefined;
 }
 
 /** The hours between x-axis ticks for a window, fewer on a narrow chart. */
@@ -80,7 +82,8 @@ export function timeline(
             to = x(next);
           if (to - from <= 0) return nothing;
           const tone = band(lane.kind, state);
-          return svg`<rect class=${`band b-${tone}`} data-state=${state} x=${from} y=${y} width=${to - from} height=${BAND}></rect>`;
+          const color = tone === "gap" ? undefined : text.color?.(lane, state);
+          return svg`<rect class=${`band b-${tone}`} data-state=${state} style=${color ? `--band: ${color}` : ""} x=${from} y=${y} width=${to - from} height=${BAND}></rect>`;
         })}
       </g>`;
     })}

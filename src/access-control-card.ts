@@ -14,6 +14,7 @@ import {
 } from "./history";
 import { formatLocale, localize, type MessageKey } from "./localize";
 import { candidates, overall, resolve } from "./model";
+import { stateColor } from "./state-colors";
 import { styles } from "./styles";
 import { timeAt, timeline } from "./timeline";
 import type { CardConfig, HomeAssistant, Resolved, Tone } from "./types";
@@ -228,6 +229,23 @@ export class AccessControlCard extends LitElement {
         : (kind === "lock" ? DOOR_STATE : GATE_STATE)[state];
     return key ? this.t(key as MessageKey) : state;
   }
+  /**
+   * An item's color from Home Assistant's state colors, when the card is set to
+   * follow them: the lock or gate's state, or the contact's while a door is open.
+   * Without that setting the card's own tone colors apply.
+   */
+  private color(item: Resolved): string | undefined {
+    if (!this.config?.state_colors || !this.ha) return undefined;
+    const fallback = `var(--ac-${item.tone})`;
+    if (item.available && item.opened && item.contact)
+      return stateColor(this.ha, item.contact, "on", fallback);
+    return stateColor(this.ha, item.entity, item.state, fallback);
+  }
+  /** A timeline band or legend swatch in Home Assistant's state colors. */
+  private bandColor(entityId: string, state: string, tone: string) {
+    if (!this.config?.state_colors || !this.ha) return undefined;
+    return stateColor(this.ha, entityId, state, `var(--ac-${tone})`);
+  }
   private headline(items: Resolved[]): string {
     const count = (tone: Tone) => items.filter((i) => i.tone === tone).length;
     const part = (n: number, one: MessageKey, many: MessageKey) =>
@@ -338,7 +356,12 @@ export class AccessControlCard extends LitElement {
     const label = busy ? this.t("sending") : this.stateLabel(item);
     const rest = `${contact ? ` · ${contact}` : ""}${item.area ? ` · ${item.area}` : ""}`;
     const status = `${label}${rest}`;
-    return html`<div class="row sev-${item.tone}" data-entity=${item.entity}>
+    const color = this.color(item);
+    return html`<div
+        class="row sev-${item.tone}"
+        data-entity=${item.entity}
+        style=${color ? `--sev: ${color}` : ""}
+      >
         <div class="who">
           <button class="info" @click=${() => this.moreInfo(item.entity)}>
             <span class="circ"
@@ -476,6 +499,21 @@ export class AccessControlCard extends LitElement {
       item?.kind === "gate"
         ? ["ok", "opening", "open", "closing", "gap"]
         : ["ok", "attention", "open", "problem", "gap"];
+    // With Home Assistant's colors, each key shows a state it stands for.
+    const keyColor = (key: Band) => {
+      if (!item || key === "gap") return undefined;
+      if (item.kind === "gate")
+        return this.bandColor(item.entity, key === "ok" ? "closed" : key, key);
+      if (key === "open" && item.contact)
+        return this.bandColor(item.contact, "on", key);
+      const state = {
+        ok: "locked",
+        attention: "unlocked",
+        open: "open",
+        problem: "jammed",
+      }[key as string];
+      return state ? this.bandColor(item.entity, state, key) : undefined;
+    };
     return html`<dialog
       id="history"
       class=${this.config?.appearance === "bubble" ? "bubble" : ""}
@@ -541,6 +579,12 @@ export class AccessControlCard extends LitElement {
                       time,
                       lane: (lane) => this.laneLabel(item, lane.kind),
                       label: title,
+                      color: (lane, state) =>
+                        this.bandColor(
+                          lane.entityId,
+                          state,
+                          band(lane.kind, state),
+                        ),
                     },
                     Math.max(280, this.plotWidth),
                   )
@@ -556,6 +600,10 @@ export class AccessControlCard extends LitElement {
               ? lane.marks[lane.marks.length - 1]?.[1]
               : stateAt(lane, at);
           const tone = state === undefined ? "none" : band(lane.kind, state);
+          const color =
+            state === undefined || tone === "gap"
+              ? undefined
+              : this.bandColor(lane.entityId, state, tone);
           return html`<button
             class="lane-item"
             data-lane=${lane.kind}
@@ -564,7 +612,10 @@ export class AccessControlCard extends LitElement {
               this.moreInfo(lane.entityId);
             }}
           >
-            <span class=${`swatch b-${tone}`}></span>
+            <span
+              class=${`swatch b-${tone}`}
+              style=${color ? `--band: ${color}` : ""}
+            ></span>
             <span class="lane-name">${this.laneLabel(item!, lane.kind)}</span>
             <strong>${this.laneState(lane.kind, state)}</strong>
           </button>`;
@@ -574,7 +625,11 @@ export class AccessControlCard extends LitElement {
         ${keys.map(
           (key) =>
             html`<li>
-              <span class=${`swatch b-${key}`}></span>${this.t(
+              <span
+                class=${`swatch b-${key}`}
+                style=${keyColor(key) ? `--band: ${keyColor(key)}` : ""}
+              ></span
+              >${this.t(
                 key === "ok" && item?.kind === "gate" ? "keyClosed" : KEY[key],
               )}
             </li>`,
@@ -622,6 +677,9 @@ export class AccessControlCard extends LitElement {
     const gates = this.config.gates.map((g) => resolve(this.ha!, g, "gate"));
     const all = [...doors, ...gates];
     const tone = all.length ? overall(all) : "unknown";
+    // The summary takes the color of the item that sets its tone.
+    const worst = all.find((i) => i.tone === tone);
+    const heroColor = worst ? this.color(worst) : undefined;
     const lockable = doors.filter(
       (d) => d.available && !d.needsCode && d.state === "unlocked",
     );
@@ -639,7 +697,10 @@ export class AccessControlCard extends LitElement {
     const lockAllFailure = this.failures.get("*");
     return html`<ha-card class=${this.config.appearance}>
       <div class="title">${this.config.title ?? this.t("title")}</div>
-      <div class="hero sev-${tone}">
+      <div
+        class="hero sev-${tone}"
+        style=${heroColor ? `--sev: ${heroColor}` : ""}
+      >
         <span class="circ big">${icon(HERO_ICON[tone])}</span>
         <div class="hero-text">
           <div class="headline">
